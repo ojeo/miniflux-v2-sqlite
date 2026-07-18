@@ -10,11 +10,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lib/pq"
-
 	"miniflux.app/v2/internal/model"
 	"miniflux.app/v2/internal/timezone"
 )
+
+// quoteIdent quotes a SQLite identifier (column/table name) with double quotes.
+// It replaces any embedded double quote by doubling it, as required by SQLite.
+func quoteIdent(ident string) string {
+	return `"` + strings.ReplaceAll(ident, `"`, `""`) + `"`
+}
 
 // EntryQueryBuilder builds a SQL query to fetch entries.
 type EntryQueryBuilder struct {
@@ -36,24 +40,23 @@ func (e *EntryQueryBuilder) WithEnclosures() *EntryQueryBuilder {
 
 // WithoutContent excludes the content column from the query results,
 // replacing it with an empty string. This significantly reduces data
-// transfer from PostgreSQL on list pages where content is not displayed.
+// transfer on list pages where content is not displayed.
 func (e *EntryQueryBuilder) WithoutContent() *EntryQueryBuilder {
 	e.excludeContent = true
 	return e
 }
 
-// WithSearchQuery adds full-text search query to the condition.
+// WithSearchQuery adds a full-text search query to the condition.
+//
+// PostgreSQL's tsvector/websearch_to_tsquery is replaced by SQLite FTS5: we
+// match against the entries_fts external-content virtual table. Relevance
+// ranking (ts_rank) is dropped as a deliberate downgrade; results are ordered
+// by the caller's regular sort expression (usually published_at).
 func (e *EntryQueryBuilder) WithSearchQuery(query string) *EntryQueryBuilder {
 	if query != "" {
 		nArgs := len(e.args) + 1
-		e.conditions = append(e.conditions, fmt.Sprintf("e.document_vectors @@ websearch_to_tsquery($%d)", nArgs))
+		e.conditions = append(e.conditions, fmt.Sprintf("e.id IN (SELECT rowid FROM entries_fts WHERE entries_fts MATCH ?%d)", nArgs))
 		e.args = append(e.args, query)
-
-		// 0.0000001 = 0.1 / (seconds_in_a_day)
-
-		e.sortExpressions = append(e.sortExpressions,
-			fmt.Sprintf("ts_rank(document_vectors, websearch_to_tsquery($%d)) - extract (epoch from now() - published_at)::float * 0.0000001 DESC", nArgs),
-		)
 	}
 	return e
 }
@@ -61,37 +64,37 @@ func (e *EntryQueryBuilder) WithSearchQuery(query string) *EntryQueryBuilder {
 // WithStarred adds starred filter.
 func (e *EntryQueryBuilder) WithStarred(starred bool) *EntryQueryBuilder {
 	if starred {
-		e.conditions = append(e.conditions, "e.starred is true")
+		e.conditions = append(e.conditions, "e.starred is 1")
 	} else {
-		e.conditions = append(e.conditions, "e.starred is false")
+		e.conditions = append(e.conditions, "e.starred is 0")
 	}
 	return e
 }
 
 // BeforeChangedDate adds a condition < changed_at
 func (e *EntryQueryBuilder) BeforeChangedDate(date time.Time) *EntryQueryBuilder {
-	e.conditions = append(e.conditions, "e.changed_at < $"+strconv.Itoa(len(e.args)+1))
+	e.conditions = append(e.conditions, "e.changed_at < ?"+strconv.Itoa(len(e.args)+1))
 	e.args = append(e.args, date)
 	return e
 }
 
 // AfterChangedDate adds a condition > changed_at
 func (e *EntryQueryBuilder) AfterChangedDate(date time.Time) *EntryQueryBuilder {
-	e.conditions = append(e.conditions, "e.changed_at > $"+strconv.Itoa(len(e.args)+1))
+	e.conditions = append(e.conditions, "e.changed_at > ?"+strconv.Itoa(len(e.args)+1))
 	e.args = append(e.args, date)
 	return e
 }
 
 // BeforePublishedDate adds a condition < published_at
 func (e *EntryQueryBuilder) BeforePublishedDate(date time.Time) *EntryQueryBuilder {
-	e.conditions = append(e.conditions, "e.published_at < $"+strconv.Itoa(len(e.args)+1))
+	e.conditions = append(e.conditions, "e.published_at < ?"+strconv.Itoa(len(e.args)+1))
 	e.args = append(e.args, date)
 	return e
 }
 
 // AfterPublishedDate adds a condition > published_at
 func (e *EntryQueryBuilder) AfterPublishedDate(date time.Time) *EntryQueryBuilder {
-	e.conditions = append(e.conditions, "e.published_at > $"+strconv.Itoa(len(e.args)+1))
+	e.conditions = append(e.conditions, "e.published_at > ?"+strconv.Itoa(len(e.args)+1))
 	e.args = append(e.args, date)
 	return e
 }
@@ -99,7 +102,7 @@ func (e *EntryQueryBuilder) AfterPublishedDate(date time.Time) *EntryQueryBuilde
 // BeforeEntryID adds a condition < entryID.
 func (e *EntryQueryBuilder) BeforeEntryID(entryID int64) *EntryQueryBuilder {
 	if entryID != 0 {
-		e.conditions = append(e.conditions, "e.id < $"+strconv.Itoa(len(e.args)+1))
+		e.conditions = append(e.conditions, "e.id < ?"+strconv.Itoa(len(e.args)+1))
 		e.args = append(e.args, entryID)
 	}
 	return e
@@ -108,7 +111,7 @@ func (e *EntryQueryBuilder) BeforeEntryID(entryID int64) *EntryQueryBuilder {
 // AfterEntryID adds a condition > entryID.
 func (e *EntryQueryBuilder) AfterEntryID(entryID int64) *EntryQueryBuilder {
 	if entryID != 0 {
-		e.conditions = append(e.conditions, "e.id > $"+strconv.Itoa(len(e.args)+1))
+		e.conditions = append(e.conditions, "e.id > ?"+strconv.Itoa(len(e.args)+1))
 		e.args = append(e.args, entryID)
 	}
 	return e
@@ -117,11 +120,16 @@ func (e *EntryQueryBuilder) AfterEntryID(entryID int64) *EntryQueryBuilder {
 // WithEntryIDs filter by entry IDs.
 func (e *EntryQueryBuilder) WithEntryIDs(entryIDs ...int64) *EntryQueryBuilder {
 	if len(entryIDs) == 1 {
-		e.conditions = append(e.conditions, fmt.Sprintf("e.id = $%d", len(e.args)+1))
+		e.conditions = append(e.conditions, fmt.Sprintf("e.id = ?%d", len(e.args)+1))
 		e.args = append(e.args, entryIDs[0])
 	} else if len(entryIDs) > 1 {
-		e.conditions = append(e.conditions, fmt.Sprintf("e.id = ANY($%d)", len(e.args)+1))
-		e.args = append(e.args, pq.Int64Array(entryIDs))
+		placeholders := make([]string, len(entryIDs))
+		start := len(e.args) + 1
+		for i, id := range entryIDs {
+			placeholders[i] = "?" + strconv.Itoa(start+i)
+			e.args = append(e.args, id)
+		}
+		e.conditions = append(e.conditions, fmt.Sprintf("e.id IN (%s)", strings.Join(placeholders, ", ")))
 	}
 	return e
 }
@@ -129,7 +137,7 @@ func (e *EntryQueryBuilder) WithEntryIDs(entryIDs ...int64) *EntryQueryBuilder {
 // WithFeedID filter by feed ID.
 func (e *EntryQueryBuilder) WithFeedID(feedID int64) *EntryQueryBuilder {
 	if feedID > 0 {
-		e.conditions = append(e.conditions, "e.feed_id = $"+strconv.Itoa(len(e.args)+1))
+		e.conditions = append(e.conditions, "e.feed_id = ?"+strconv.Itoa(len(e.args)+1))
 		e.args = append(e.args, feedID)
 	}
 	return e
@@ -138,7 +146,7 @@ func (e *EntryQueryBuilder) WithFeedID(feedID int64) *EntryQueryBuilder {
 // WithCategoryID filter by category ID.
 func (e *EntryQueryBuilder) WithCategoryID(categoryID int64) *EntryQueryBuilder {
 	if categoryID > 0 {
-		e.conditions = append(e.conditions, "f.category_id = $"+strconv.Itoa(len(e.args)+1))
+		e.conditions = append(e.conditions, "f.category_id = ?"+strconv.Itoa(len(e.args)+1))
 		e.args = append(e.args, categoryID)
 	}
 	return e
@@ -147,20 +155,28 @@ func (e *EntryQueryBuilder) WithCategoryID(categoryID int64) *EntryQueryBuilder 
 // WithStatuses filter by a list of entry statuses.
 func (e *EntryQueryBuilder) WithStatuses(statuses ...string) *EntryQueryBuilder {
 	if len(statuses) == 1 {
-		e.conditions = append(e.conditions, fmt.Sprintf("e.status = $%d", len(e.args)+1))
+		e.conditions = append(e.conditions, fmt.Sprintf("e.status = ?%d", len(e.args)+1))
 		e.args = append(e.args, statuses[0])
 	} else if len(statuses) > 1 {
-		e.conditions = append(e.conditions, fmt.Sprintf("e.status = ANY($%d)", len(e.args)+1))
-		e.args = append(e.args, pq.StringArray(statuses))
+		placeholders := make([]string, len(statuses))
+		start := len(e.args) + 1
+		for i, s := range statuses {
+			placeholders[i] = "?" + strconv.Itoa(start+i)
+			e.args = append(e.args, s)
+		}
+		e.conditions = append(e.conditions, fmt.Sprintf("e.status IN (%s)", strings.Join(placeholders, ", ")))
 	}
 	return e
 }
 
-// WithTags filter by a list of entry tags.
+// WithTags filter by a list of entry tags. Entries must contain *all* of the
+// given tags (this mirrors PostgreSQL's `tags @> ARRAY[...]`). Tags are stored
+// as a JSON array in entries.tags, so we use json_each().
 func (e *EntryQueryBuilder) WithTags(tags ...string) *EntryQueryBuilder {
-	if len(tags) > 0 {
-		e.conditions = append(e.conditions, fmt.Sprintf("LOWER(e.tags::text)::text[] @> LOWER($%d::text)::text[]", len(e.args)+1))
-		e.args = append(e.args, pq.Array(tags))
+	for _, tag := range tags {
+		nArgs := len(e.args) + 1
+		e.conditions = append(e.conditions, fmt.Sprintf("EXISTS (SELECT 1 FROM json_each(e.tags) WHERE json_each.value = ?%d)", nArgs))
+		e.args = append(e.args, tag)
 	}
 	return e
 }
@@ -168,7 +184,7 @@ func (e *EntryQueryBuilder) WithTags(tags ...string) *EntryQueryBuilder {
 // WithoutStatus set the entry status that should not be returned.
 func (e *EntryQueryBuilder) WithoutStatus(status string) *EntryQueryBuilder {
 	if status != "" {
-		e.conditions = append(e.conditions, "e.status <> $"+strconv.Itoa(len(e.args)+1))
+		e.conditions = append(e.conditions, "e.status <> ?"+strconv.Itoa(len(e.args)+1))
 		e.args = append(e.args, status)
 	}
 	return e
@@ -176,7 +192,7 @@ func (e *EntryQueryBuilder) WithoutStatus(status string) *EntryQueryBuilder {
 
 // WithShareCode set the entry share code.
 func (e *EntryQueryBuilder) WithShareCode(shareCode string) *EntryQueryBuilder {
-	e.conditions = append(e.conditions, "e.share_code = $"+strconv.Itoa(len(e.args)+1))
+	e.conditions = append(e.conditions, "e.share_code = ?"+strconv.Itoa(len(e.args)+1))
 	e.args = append(e.args, shareCode)
 	return e
 }
@@ -189,11 +205,19 @@ func (e *EntryQueryBuilder) WithShareCodeNotEmpty() *EntryQueryBuilder {
 
 // WithSorting add a sort expression.
 func (e *EntryQueryBuilder) WithSorting(column, direction string) *EntryQueryBuilder {
+	qualified := quoteIdent(column)
+	// SQLite requires table-qualified column names in ORDER BY when multiple
+	// JOINed tables share the same column name (id, language, etc.).
+	// PostgreSQL infers the column from the SELECT list but SQLite does not.
+	switch column {
+	case "id", "language":
+		qualified = "e." + qualified
+	}
 	switch {
 	case strings.EqualFold(direction, "ASC"):
-		e.sortExpressions = append(e.sortExpressions, pq.QuoteIdentifier(column)+" ASC")
+		e.sortExpressions = append(e.sortExpressions, qualified+" ASC")
 	case strings.EqualFold(direction, "DESC"):
-		e.sortExpressions = append(e.sortExpressions, pq.QuoteIdentifier(column)+" DESC")
+		e.sortExpressions = append(e.sortExpressions, qualified+" DESC")
 	}
 
 	return e
@@ -224,8 +248,8 @@ func (e *EntryQueryBuilder) WithOffset(offset int) *EntryQueryBuilder {
 }
 
 func (e *EntryQueryBuilder) WithGloballyVisible() *EntryQueryBuilder {
-	e.conditions = append(e.conditions, "c.hide_globally IS FALSE")
-	e.conditions = append(e.conditions, "f.hide_globally IS FALSE")
+	e.conditions = append(e.conditions, "c.hide_globally IS 0")
+	e.conditions = append(e.conditions, "f.hide_globally IS 0")
 	return e
 }
 
@@ -295,7 +319,7 @@ func (e *EntryQueryBuilder) fetchEntries(withCount bool) (model.Entries, int, er
 			e.user_id,
 			e.feed_id,
 			e.hash,
-			e.published_at at time zone u.timezone,
+			e.published_at,
 			e.title,
 			e.url,
 			e.comments_url,
@@ -362,12 +386,13 @@ func (e *EntryQueryBuilder) fetchEntries(withCount bool) (model.Entries, int, er
 
 		entry := model.NewEntry()
 
-		dest := []any{
+		var date, createdAt, changedAt, feedCheckedAt model.Time
+	dest := []any{
 			&entry.ID,
 			&entry.UserID,
 			&entry.FeedID,
 			&entry.Hash,
-			&entry.Date,
+			&date,
 			&entry.Title,
 			&entry.URL,
 			&entry.CommentsURL,
@@ -375,28 +400,28 @@ func (e *EntryQueryBuilder) fetchEntries(withCount bool) (model.Entries, int, er
 			&entry.ShareCode,
 			&entry.Content,
 			&entry.Status,
-			&entry.Starred,
+			model.BoolScanner{Target: &entry.Starred},
 			&entry.ReadingTime,
-			&entry.CreatedAt,
-			&entry.ChangedAt,
-			pq.Array(&entry.Tags),
+			&createdAt,
+			&changedAt,
+			model.StringArrayScanner{Target: &entry.Tags},
 			&entry.Language,
 			&entry.Feed.Title,
 			&entry.Feed.FeedURL,
 			&entry.Feed.SiteURL,
 			&entry.Feed.Description,
 			&entry.Feed.Language,
-			&entry.Feed.CheckedAt,
+			&feedCheckedAt,
 			&entry.Feed.Category.ID,
 			&entry.Feed.Category.Title,
-			&entry.Feed.Category.HideGlobally,
+			model.BoolScanner{Target: &entry.Feed.Category.HideGlobally},
 			&entry.Feed.ScraperRules,
 			&entry.Feed.RewriteRules,
-			&entry.Feed.Crawler,
+			model.BoolScanner{Target: &entry.Feed.Crawler},
 			&entry.Feed.UserAgent,
 			&entry.Feed.Cookie,
-			&entry.Feed.HideGlobally,
-			&entry.Feed.NoMediaPlayer,
+			model.BoolScanner{Target: &entry.Feed.HideGlobally},
+			model.BoolScanner{Target: &entry.Feed.NoMediaPlayer},
 			&entry.Feed.WebhookURL,
 			&iconID,
 			&externalIconID,
@@ -411,6 +436,11 @@ func (e *EntryQueryBuilder) fetchEntries(withCount bool) (model.Entries, int, er
 		if err != nil {
 			return nil, 0, fmt.Errorf("store: unable to fetch entry row: %v", err)
 		}
+
+		entry.Date = date.Time
+		entry.CreatedAt = createdAt.Time
+		entry.ChangedAt = changedAt.Time
+		entry.Feed.CheckedAt = feedCheckedAt.Time
 
 		if iconID.Valid && externalIconID.Valid && externalIconID.String != "" {
 			entry.Feed.Icon.FeedID = entry.FeedID
@@ -534,7 +564,7 @@ func (s *Storage) NewEntryQueryBuilder(userID int64) *EntryQueryBuilder {
 	return &EntryQueryBuilder{
 		store:      s,
 		args:       []any{userID},
-		conditions: []string{"e.user_id = $1"},
+		conditions: []string{"e.user_id = ?1"},
 	}
 }
 

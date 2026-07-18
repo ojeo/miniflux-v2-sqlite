@@ -15,15 +15,15 @@ var ErrAPIKeyNotFound = errors.New("store: API Key not found")
 
 // APIKeyExists checks if an API Key with the same description exists.
 func (s *Storage) APIKeyExists(userID int64, description string) bool {
-	var result bool
-	query := `SELECT true FROM api_keys WHERE user_id=$1 AND lower(description)=lower($2) LIMIT 1`
+	var result int
+	query := `SELECT 1 FROM api_keys WHERE user_id=?1 AND lower(description)=lower(?2) LIMIT 1`
 	s.db.QueryRow(query, userID, description).Scan(&result)
-	return result
+	return result != 0
 }
 
 // SetAPIKeyUsedTimestamp updates the last used date of an API Key.
 func (s *Storage) SetAPIKeyUsedTimestamp(userID int64, token string) error {
-	query := `UPDATE api_keys SET last_used_at=now() WHERE user_id=$1 and token=$2`
+	query := `UPDATE api_keys SET last_used_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE user_id=?1 and token=?2`
 	_, err := s.db.Exec(query, userID, token)
 	if err != nil {
 		return fmt.Errorf(`store: unable to update last used date for API key: %v`, err)
@@ -40,7 +40,7 @@ func (s *Storage) APIKeys(userID int64) (model.APIKeys, error) {
 		FROM
 			api_keys
 		WHERE
-			user_id=$1
+			user_id=?1
 		ORDER BY description ASC
 	`
 	rows, err := s.db.Query(query, userID)
@@ -52,16 +52,19 @@ func (s *Storage) APIKeys(userID int64) (model.APIKeys, error) {
 	apiKeys := make(model.APIKeys, 0)
 	for rows.Next() {
 		var apiKey model.APIKey
+		var lastUsedAt, createdAt model.Time
 		if err := rows.Scan(
 			&apiKey.ID,
 			&apiKey.UserID,
 			&apiKey.Token,
 			&apiKey.Description,
-			&apiKey.LastUsedAt,
-			&apiKey.CreatedAt,
+			&lastUsedAt,
+			&createdAt,
 		); err != nil {
 			return nil, fmt.Errorf(`store: unable to fetch API Key row: %v`, err)
 		}
+		apiKey.LastUsedAt = &lastUsedAt.Time
+		apiKey.CreatedAt = createdAt.Time
 
 		apiKeys = append(apiKeys, apiKey)
 	}
@@ -75,11 +78,12 @@ func (s *Storage) CreateAPIKey(userID int64, description string) (*model.APIKey,
 		INSERT INTO api_keys
 			(user_id, token, description)
 		VALUES
-			($1, $2, $3)
+			(?1, ?2, ?3)
 		RETURNING
 			id, user_id, token, description, last_used_at, created_at
 	`
 	var apiKey model.APIKey
+	var lastUsedAt, createdAt model.Time
 	err := s.db.QueryRow(
 		query,
 		userID,
@@ -90,19 +94,21 @@ func (s *Storage) CreateAPIKey(userID int64, description string) (*model.APIKey,
 		&apiKey.UserID,
 		&apiKey.Token,
 		&apiKey.Description,
-		&apiKey.LastUsedAt,
-		&apiKey.CreatedAt,
+		&lastUsedAt,
+		&createdAt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf(`store: unable to create API Key: %v`, err)
 	}
+	apiKey.LastUsedAt = &lastUsedAt.Time
+	apiKey.CreatedAt = createdAt.Time
 
 	return &apiKey, nil
 }
 
 // DeleteAPIKey deletes an API Key.
 func (s *Storage) DeleteAPIKey(userID, keyID int64) error {
-	result, err := s.db.Exec(`DELETE FROM api_keys WHERE id = $1 AND user_id = $2`, keyID, userID)
+	result, err := s.db.Exec(`DELETE FROM api_keys WHERE id = ?1 AND user_id = ?2`, keyID, userID)
 	if err != nil {
 		return fmt.Errorf(`store: unable to delete this API Key: %v`, err)
 	}

@@ -449,6 +449,8 @@
     "page.about.global_config_options": "خيارات التكوين العامة",
     "page.about.go_version": "إصدار Go:",
     "page.about.license": "الرخصة:",
+    "page.about.sqlite_version": "إصدار SQLite:",
+
     "page.about.postgres_version": "إصدار Postgres:",
     "page.about.title": "حول",
     "page.about.version": "الإصدار:",

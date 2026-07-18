@@ -30,7 +30,7 @@ func NewCertificateCache(storage *Storage) *certificateCache {
 // Get returns a certificate data for the specified key.
 // If there's no such key, Get returns ErrCacheMiss.
 func (c *certificateCache) Get(ctx context.Context, key string) ([]byte, error) {
-	query := `SELECT data::bytea FROM acme_cache WHERE key = $1`
+	query := `SELECT data FROM acme_cache WHERE key = ?1`
 	var data []byte
 	err := c.storage.db.QueryRowContext(ctx, query, key).Scan(&data)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -42,8 +42,8 @@ func (c *certificateCache) Get(ctx context.Context, key string) ([]byte, error) 
 
 // Put stores the data in the cache under the specified key.
 func (c *certificateCache) Put(ctx context.Context, key string, data []byte) error {
-	query := `INSERT INTO acme_cache (key, data, updated_at) VALUES($1, $2::bytea, now())
-	          ON CONFLICT (key) DO UPDATE SET data = $2::bytea, updated_at = now()`
+	query := `INSERT INTO acme_cache (key, data, updated_at) VALUES(?1, ?2, strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+	          ON CONFLICT (key) DO UPDATE SET data = ?2, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')`
 	_, err := c.storage.db.ExecContext(ctx, query, key, data)
 	if err != nil {
 		return err
@@ -54,7 +54,7 @@ func (c *certificateCache) Put(ctx context.Context, key string, data []byte) err
 // Delete removes a certificate data from the cache under the specified key.
 // If there's no such key in the cache, Delete returns nil.
 func (c *certificateCache) Delete(ctx context.Context, key string) error {
-	query := `DELETE FROM acme_cache WHERE key = $1`
+	query := `DELETE FROM acme_cache WHERE key = ?1`
 	_, err := c.storage.db.ExecContext(ctx, query, key)
 	if err != nil {
 		return err

@@ -437,6 +437,8 @@
     "page.about.global_config_options": "वैश्विक विन्यास विकल्प",
     "page.about.go_version": "गो संस्करण:",
     "page.about.license": "अनुज्ञा:",
+    "page.about.sqlite_version": "पोस्तग्राइस संस्करण:",
+
     "page.about.postgres_version": "पोस्तग्राइस संस्करण:",
     "page.about.title": "पृष्ठ के बारे में",
     "page.about.version": "संस्करण:",

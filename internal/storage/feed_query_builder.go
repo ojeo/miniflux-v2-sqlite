@@ -9,7 +9,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/lib/pq"
 	"miniflux.app/v2/internal/model"
 	"miniflux.app/v2/internal/timezone"
 )
@@ -33,18 +32,18 @@ func (s *Storage) NewFeedQueryBuilder(userID int64) *feedQueryBuilder {
 	return &feedQueryBuilder{
 		db:                s.db,
 		args:              []any{userID},
-		conditions:        []string{"f.user_id = $1"},
+		conditions:        []string{"f.user_id = ?1"},
 		counterArgs:       []any{userID, model.EntryStatusRead, model.EntryStatusUnread},
-		counterConditions: []string{"e.user_id = $1", "e.status IN ($2, $3)"},
+		counterConditions: []string{"e.user_id = ?1", "e.status IN (?2, ?3)"},
 	}
 }
 
 // WithCategoryID filter by category ID.
 func (f *feedQueryBuilder) WithCategoryID(categoryID int64) *feedQueryBuilder {
 	if categoryID > 0 {
-		f.conditions = append(f.conditions, "f.category_id = $"+strconv.Itoa(len(f.args)+1))
+		f.conditions = append(f.conditions, "f.category_id = ?"+strconv.Itoa(len(f.args)+1))
 		f.args = append(f.args, categoryID)
-		f.counterConditions = append(f.counterConditions, "f.category_id = $"+strconv.Itoa(len(f.counterArgs)+1))
+		f.counterConditions = append(f.counterConditions, "f.category_id = ?"+strconv.Itoa(len(f.counterArgs)+1))
 		f.counterArgs = append(f.counterArgs, categoryID)
 		f.counterJoinFeeds = true
 	}
@@ -54,7 +53,7 @@ func (f *feedQueryBuilder) WithCategoryID(categoryID int64) *feedQueryBuilder {
 // WithFeedID filter by feed ID.
 func (f *feedQueryBuilder) WithFeedID(feedID int64) *feedQueryBuilder {
 	if feedID > 0 {
-		f.conditions = append(f.conditions, "f.id = $"+strconv.Itoa(len(f.args)+1))
+		f.conditions = append(f.conditions, "f.id = ?"+strconv.Itoa(len(f.args)+1))
 		f.args = append(f.args, feedID)
 	}
 	return f
@@ -68,11 +67,16 @@ func (f *feedQueryBuilder) WithCounters() *feedQueryBuilder {
 
 // WithSorting add a sort expression.
 func (f *feedQueryBuilder) WithSorting(column, direction string) *feedQueryBuilder {
+	qualified := quoteIdent(column)
+	switch column {
+	case "id":
+		qualified = "f." + qualified
+	}
 	switch {
 	case strings.EqualFold(direction, "ASC"):
-		f.sortExpressions = append(f.sortExpressions, pq.QuoteIdentifier(column)+" ASC")
+		f.sortExpressions = append(f.sortExpressions, qualified+" ASC")
 	case strings.EqualFold(direction, "DESC"):
-		f.sortExpressions = append(f.sortExpressions, pq.QuoteIdentifier(column)+" DESC")
+		f.sortExpressions = append(f.sortExpressions, qualified+" DESC")
 	}
 
 	return f
@@ -148,8 +152,8 @@ func (f *feedQueryBuilder) GetFeeds() (model.Feeds, error) {
 			f.etag_header,
 			f.last_modified_header,
 			f.user_id,
-			f.checked_at at time zone u.timezone,
-			f.next_check_at at time zone u.timezone,
+			f.checked_at,
+			f.next_check_at,
 			f.parsing_error_count,
 			f.parsing_error_msg,
 			f.scraper_rules,
@@ -219,6 +223,7 @@ func (f *feedQueryBuilder) GetFeeds() (model.Feeds, error) {
 		var iconID sql.NullInt64
 		var externalIconID sql.NullString
 		var tz string
+		var checkedAt, nextCheckAt model.Time
 		feed.Category = &model.Category{}
 
 		err := rows.Scan(
@@ -231,8 +236,8 @@ func (f *feedQueryBuilder) GetFeeds() (model.Feeds, error) {
 			&feed.EtagHeader,
 			&feed.LastModifiedHeader,
 			&feed.UserID,
-			&feed.CheckedAt,
-			&feed.NextCheckAt,
+			&checkedAt,
+			&nextCheckAt,
 			&feed.ParsingErrorCount,
 			&feed.ParsingErrorMsg,
 			&feed.ScraperRules,
@@ -242,7 +247,7 @@ func (f *feedQueryBuilder) GetFeeds() (model.Feeds, error) {
 			&feed.KeeplistRules,
 			&feed.BlockFilterEntryRules,
 			&feed.KeepFilterEntryRules,
-			&feed.Crawler,
+			model.BoolScanner{Target: &feed.Crawler},
 			&feed.UserAgent,
 			&feed.Cookie,
 			&feed.Username,
@@ -250,12 +255,12 @@ func (f *feedQueryBuilder) GetFeeds() (model.Feeds, error) {
 			&feed.IgnoreHTTPCache,
 			&feed.AllowSelfSignedCertificates,
 			&feed.FetchViaProxy,
-			&feed.Disabled,
-			&feed.NoMediaPlayer,
-			&feed.HideGlobally,
+			model.BoolScanner{Target: &feed.Disabled},
+			model.BoolScanner{Target: &feed.NoMediaPlayer},
+			model.BoolScanner{Target: &feed.HideGlobally},
 			&feed.Category.ID,
 			&feed.Category.Title,
-			&feed.Category.HideGlobally,
+			model.BoolScanner{Target: &feed.Category.HideGlobally},
 			&iconID,
 			&externalIconID,
 			&tz,
@@ -270,6 +275,8 @@ func (f *feedQueryBuilder) GetFeeds() (model.Feeds, error) {
 			&feed.ProxyURL,
 			&feed.IgnoreEntryUpdates,
 		)
+		feed.CheckedAt = checkedAt.Time
+		feed.NextCheckAt = nextCheckAt.Time
 		if err != nil {
 			return nil, fmt.Errorf(`store: unable to fetch feeds row: %w`, err)
 		}

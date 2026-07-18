@@ -4,7 +4,6 @@
 package storage // import "miniflux.app/v2/internal/storage"
 
 import (
-	"database/sql"
 	"fmt"
 	"log/slog"
 
@@ -18,7 +17,7 @@ func (s *Storage) AddWebAuthnCredential(userID int64, handle []byte, credential 
 		INSERT INTO webauthn_credentials
 			(handle, cred_id, user_id, public_key, attestation_type, aaguid, sign_count, clone_warning, backup_eligible, backup_state)
 		VALUES
-			($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+			(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
 	`
 	_, err := s.db.Exec(
 		query,
@@ -39,7 +38,7 @@ func (s *Storage) AddWebAuthnCredential(userID int64, handle []byte, credential 
 func (s *Storage) WebAuthnCredentialByHandle(handle []byte) (int64, *model.WebAuthnCredential, error) {
 	var credential model.WebAuthnCredential
 	var userID int64
-	var backupEligible sql.NullBool
+	var backupEligible bool
 	query := `
 		SELECT
 			user_id,
@@ -57,8 +56,9 @@ func (s *Storage) WebAuthnCredentialByHandle(handle []byte) (int64, *model.WebAu
 		FROM
 			webauthn_credentials
 		WHERE
-			handle = $1
+			handle = ?1
 	`
+	var addedOn, lastSeenOn model.Time
 	err := s.db.
 		QueryRow(query, handle).
 		Scan(
@@ -69,21 +69,21 @@ func (s *Storage) WebAuthnCredentialByHandle(handle []byte) (int64, *model.WebAu
 			&credential.Credential.Authenticator.AAGUID,
 			&credential.Credential.Authenticator.SignCount,
 			&credential.Credential.Authenticator.CloneWarning,
-			&credential.AddedOn,
-			&credential.LastSeenOn,
+			&addedOn,
+			&lastSeenOn,
 			&credential.Name,
 			&backupEligible,
 			&credential.Credential.Flags.BackupState,
 		)
+	credential.AddedOn = &addedOn.Time
+	credential.LastSeenOn = &lastSeenOn.Time
 
 	if err != nil {
 		return 0, nil, err
 	}
 
-	if backupEligible.Valid {
-		credential.Credential.Flags.BackupEligible = backupEligible.Bool
-		credential.BackupEligibleKnown = true
-	}
+	credential.Credential.Flags.BackupEligible = backupEligible
+	credential.BackupEligibleKnown = true
 	credential.Handle = handle
 	return userID, &credential, err
 }
@@ -106,7 +106,7 @@ func (s *Storage) WebAuthnCredentialsByUserID(userID int64) ([]model.WebAuthnCre
 		FROM
 			webauthn_credentials
 		WHERE
-			user_id = $1
+			user_id = ?1
 	`
 	rows, err := s.db.Query(query, userID)
 	if err != nil {
@@ -117,7 +117,8 @@ func (s *Storage) WebAuthnCredentialsByUserID(userID int64) ([]model.WebAuthnCre
 	var creds []model.WebAuthnCredential
 	for rows.Next() {
 		var cred model.WebAuthnCredential
-		var backupEligible sql.NullBool
+		var backupEligible bool
+		var addedOn, lastSeenOn model.Time
 		err = rows.Scan(
 			&cred.Handle,
 			&cred.Credential.ID,
@@ -127,19 +128,19 @@ func (s *Storage) WebAuthnCredentialsByUserID(userID int64) ([]model.WebAuthnCre
 			&cred.Credential.Authenticator.SignCount,
 			&cred.Credential.Authenticator.CloneWarning,
 			&cred.Name,
-			&cred.AddedOn,
-			&cred.LastSeenOn,
+			&addedOn,
+			&lastSeenOn,
 			&backupEligible,
 			&cred.Credential.Flags.BackupState,
 		)
+		cred.AddedOn = &addedOn.Time
+		cred.LastSeenOn = &lastSeenOn.Time
 		if err != nil {
 			return nil, err
 		}
 
-		if backupEligible.Valid {
-			cred.Credential.Flags.BackupEligible = backupEligible.Bool
-			cred.BackupEligibleKnown = true
-		}
+		cred.Credential.Flags.BackupEligible = backupEligible
+		cred.BackupEligibleKnown = true
 
 		creds = append(creds, cred)
 	}
@@ -150,12 +151,12 @@ func (s *Storage) WebAuthnCredentialsByUserID(userID int64) ([]model.WebAuthnCre
 func (s *Storage) WebAuthnSaveLogin(handle []byte, credential *webauthn.Credential) error {
 	query := `
 		UPDATE webauthn_credentials
-		SET last_seen_on = NOW(),
-			sign_count = $1,
-			clone_warning = $2,
-			backup_eligible = $3,
-			backup_state = $4
-		WHERE handle = $5
+		SET last_seen_on = strftime('%Y-%m-%dT%H:%M:%SZ','now'),
+			sign_count = ?1,
+			clone_warning = ?2,
+			backup_eligible = ?3,
+			backup_state = ?4
+		WHERE handle = ?5
 	`
 	_, err := s.db.Exec(
 		query,
@@ -172,7 +173,7 @@ func (s *Storage) WebAuthnSaveLogin(handle []byte, credential *webauthn.Credenti
 }
 
 func (s *Storage) WebAuthnUpdateName(userID int64, handle []byte, name string) (int64, error) {
-	query := "UPDATE webauthn_credentials SET name=$1 WHERE handle=$2 AND user_id=$3"
+	query := "UPDATE webauthn_credentials SET name=?1 WHERE handle=?2 AND user_id=?3"
 	result, err := s.db.Exec(query, name, handle, userID)
 	if err != nil {
 		return 0, fmt.Errorf(`store: unable to update name for webauthn credential: %v`, err)
@@ -186,7 +187,7 @@ func (s *Storage) WebAuthnUpdateName(userID int64, handle []byte, name string) (
 
 func (s *Storage) CountWebAuthnCredentialsByUserID(userID int64) int {
 	var count int
-	query := "SELECT COUNT(*) FROM webauthn_credentials WHERE user_id = $1"
+	query := "SELECT COUNT(*) FROM webauthn_credentials WHERE user_id = ?1"
 	err := s.db.QueryRow(query, userID).Scan(&count)
 	if err != nil {
 		slog.Error("store: unable to count webauthn certs for user",
@@ -199,13 +200,13 @@ func (s *Storage) CountWebAuthnCredentialsByUserID(userID int64) int {
 }
 
 func (s *Storage) DeleteCredentialByHandle(userID int64, handle []byte) error {
-	query := "DELETE FROM webauthn_credentials WHERE user_id = $1 AND handle = $2"
+	query := "DELETE FROM webauthn_credentials WHERE user_id = ?1 AND handle = ?2"
 	_, err := s.db.Exec(query, userID, handle)
 	return err
 }
 
 func (s *Storage) DeleteAllWebAuthnCredentialsByUserID(userID int64) error {
-	query := "DELETE FROM webauthn_credentials WHERE user_id = $1"
+	query := "DELETE FROM webauthn_credentials WHERE user_id = ?1"
 	_, err := s.db.Exec(query, userID)
 	return err
 }

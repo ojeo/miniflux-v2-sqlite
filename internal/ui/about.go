@@ -33,7 +33,7 @@ func (h *handler) showAboutPage(w http.ResponseWriter, r *http.Request) {
 	view.Set("countUnread", navMetadata.CountUnread)
 	view.Set("countErrorFeeds", navMetadata.CountErrorFeeds)
 	view.Set("globalConfigOptions", config.Opts.ConfigMap(true))
-	view.Set("postgres_version", h.store.DatabaseVersion())
+	view.Set("sqlite_version", h.store.DatabaseVersion())
 	view.Set("go_version", runtime.Version())
 
 	if dbErr != nil {

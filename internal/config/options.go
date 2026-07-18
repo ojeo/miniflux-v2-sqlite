@@ -167,8 +167,8 @@ func NewConfigOptions() *configOptions {
 				},
 			},
 			"DATABASE_MAX_CONNS": {
-				parsedIntValue: 20,
-				rawValue:       "20",
+				parsedIntValue: 1,
+				rawValue:       "1",
 				valueType:      intType,
 				validator: func(rawValue string) error {
 					return validateGreaterOrEqualThan(rawValue, 1)
@@ -183,8 +183,8 @@ func NewConfigOptions() *configOptions {
 				},
 			},
 			"DATABASE_URL": {
-				parsedStringValue: "user=postgres password=postgres dbname=miniflux2 sslmode=disable",
-				rawValue:          "user=postgres password=postgres dbname=miniflux2 sslmode=disable",
+				parsedStringValue: "miniflux.db",
+				rawValue:          "miniflux.db",
 				valueType:         stringType,
 				secret:            true,
 			},
@@ -811,7 +811,7 @@ func (c *configOptions) IsAuthProxyUserCreationAllowed() bool {
 }
 
 func (c *configOptions) IsDefaultDatabaseURL() bool {
-	return c.options["DATABASE_URL"].rawValue == "user=postgres password=postgres dbname=miniflux2 sslmode=disable"
+	return c.options["DATABASE_URL"].rawValue == "miniflux.db"
 }
 
 func (c *configOptions) IsOAuth2UserCreationAllowed() bool {

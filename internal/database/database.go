@@ -32,12 +32,12 @@ func Migrate(db *sql.DB) error {
 			return fmt.Errorf("[Migration v%d] %v", newVersion, err)
 		}
 
-		if _, err := tx.Exec(`TRUNCATE schema_version`); err != nil {
+		if _, err := tx.Exec(`DELETE FROM schema_version`); err != nil {
 			tx.Rollback()
 			return fmt.Errorf("[Migration v%d] %v", newVersion, err)
 		}
 
-		if _, err := tx.Exec(`INSERT INTO schema_version (version) VALUES ($1)`, newVersion); err != nil {
+		if _, err := tx.Exec(`INSERT INTO schema_version (version) VALUES (?)`, newVersion); err != nil {
 			tx.Rollback()
 			return fmt.Errorf("[Migration v%d] %v", newVersion, err)
 		}

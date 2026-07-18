@@ -55,4 +55,13 @@ func runCleanupTasks(store *storage.Storage) {
 			slog.Int64("orphan_icons_removed", nbIcons),
 		)
 	}
+
+	startTime = time.Now()
+	if err := store.Vacuum(); err != nil {
+		slog.Error("Unable to vacuum database", slog.Any("error", err))
+	} else {
+		slog.Info("Database vacuum completed",
+			slog.Duration("elapsed_ms", time.Since(startTime).Round(time.Millisecond)),
+		)
+	}
 }

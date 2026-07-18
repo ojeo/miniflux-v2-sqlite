@@ -15,5 +15,8 @@ LABEL org.opencontainers.image.documentation=https://miniflux.app/docs/
 
 EXPOSE 8080
 ENV LISTEN_ADDR=0.0.0.0:8080
+ENV DATABASE_URL=/var/lib/miniflux/miniflux.db
+
 COPY --from=build /go/src/app/miniflux /usr/bin/miniflux
+VOLUME /var/lib/miniflux
 CMD ["/usr/bin/miniflux"]

@@ -434,6 +434,8 @@
     "page.about.global_config_options": "전역 설정 옵션",
     "page.about.go_version": "Go 버전:",
     "page.about.license": "라이선스:",
+    "page.about.sqlite_version": "SQLite 버전:",
+
     "page.about.postgres_version": "Postgres 버전:",
     "page.about.title": "소프트웨어 정보",
     "page.about.version": "버전:",

@@ -31,10 +31,11 @@ func (s *Storage) CreateWebSession(session *model.WebSession) error {
 			ip,
 			state
 		)
-		VALUES ($1, $2, $3, $4, $5)
+		VALUES (?1, ?2, ?3, ?4, ?5)
 		RETURNING created_at
 	`
 
+	var createdAt model.Time
 	err = s.db.QueryRow(
 		query,
 		session.ID,
@@ -42,10 +43,11 @@ func (s *Storage) CreateWebSession(session *model.WebSession) error {
 		session.UserAgent,
 		sql.NullString{String: session.IP, Valid: session.IP != ""},
 		stateJSON,
-	).Scan(&session.CreatedAt)
+	).Scan(&createdAt)
 	if err != nil {
 		return fmt.Errorf(`store: unable to create web session: %v`, err)
 	}
+	session.CreatedAt = createdAt.Time
 
 	return nil
 }
@@ -64,7 +66,7 @@ func (s *Storage) WebSessionsByUserID(userID int64) ([]model.WebSession, error) 
 		FROM
 			web_sessions
 		WHERE
-			user_id=$1
+			user_id=?1
 		ORDER BY
 			created_at DESC
 	`
@@ -111,7 +113,7 @@ func (s *Storage) WebSessionByID(sessionID string) (*model.WebSession, error) {
 		FROM
 			web_sessions
 		WHERE
-			id=$1
+			id=?1
 	`, sessionID)
 
 	session, err := scanWebSession(row)
@@ -141,17 +143,18 @@ func (s *Storage) RotateWebSession(oldID string, session *model.WebSession) erro
 		return fmt.Errorf(`store: unable to serialize web session state: %v`, err)
 	}
 
+	var createdAt model.Time
 	err = s.db.QueryRow(`
 		UPDATE
 			web_sessions
 		SET
-			id=$2,
-			secret_hash=$3,
-			user_id=$4,
-			state=$5,
-			created_at=now()
+			id=?2,
+			secret_hash=?3,
+			user_id=?4,
+			state=?5,
+			created_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')
 		WHERE
-			id=$1
+			id=?1
 		RETURNING created_at
 	`,
 		oldID,
@@ -159,7 +162,7 @@ func (s *Storage) RotateWebSession(oldID string, session *model.WebSession) erro
 		session.SecretHash,
 		session.NullUserID(),
 		stateJSON,
-	).Scan(&session.CreatedAt)
+	).Scan(&createdAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return errors.New(`store: nothing has been updated`)
@@ -184,10 +187,10 @@ func (s *Storage) UpdateWebSession(session *model.WebSession) error {
 		UPDATE
 			web_sessions
 		SET
-			user_id=$2,
-			state=$3
+			user_id=?2,
+			state=?3
 		WHERE
-			id=$1
+			id=?1
 	`
 
 	stateJSON, err := session.MarshalState()
@@ -219,7 +222,7 @@ func (s *Storage) UpdateWebSession(session *model.WebSession) error {
 
 // RemoveUserWebSession removes a web session for the given user if present.
 func (s *Storage) RemoveUserWebSession(userID int64, sessionID string) error {
-	if _, err := s.db.Exec(`DELETE FROM web_sessions WHERE user_id=$1 AND id=$2`, userID, sessionID); err != nil {
+	if _, err := s.db.Exec(`DELETE FROM web_sessions WHERE user_id=?1 AND id=?2`, userID, sessionID); err != nil {
 		return fmt.Errorf(`store: unable to remove this web session: %v`, err)
 	}
 
@@ -228,16 +231,15 @@ func (s *Storage) RemoveUserWebSession(userID int64, sessionID string) error {
 
 // CleanOldWebSessions removes web sessions older than the specified interval (24h minimum).
 func (s *Storage) CleanOldWebSessions(interval time.Duration) (int64, error) {
+	cutoff := time.Now().UTC().Add(-interval)
 	query := `
 		DELETE FROM
 			web_sessions
 		WHERE
-			created_at < now() - $1::interval
+			created_at < ?1
 	`
 
-	days := max(int(interval/(24*time.Hour)), 1)
-
-	result, err := s.db.Exec(query, fmt.Sprintf("%d days", days))
+	result, err := s.db.Exec(query, cutoff)
 	if err != nil {
 		return 0, fmt.Errorf(`store: unable to clean old web sessions: %v`, err)
 	}
@@ -263,16 +265,18 @@ func scanWebSession(scanner webSessionScanner) (*model.WebSession, error) {
 	var userID sql.NullInt64
 	var ip sql.NullString
 	var stateRaw []byte
+	var createdAt model.Time
 
 	err := scanner.Scan(
 		&session.ID,
 		&session.SecretHash,
 		&userID,
-		&session.CreatedAt,
+		&createdAt,
 		&session.UserAgent,
 		&ip,
 		&stateRaw,
 	)
+	session.CreatedAt = createdAt.Time
 	if err != nil {
 		return nil, err
 	}

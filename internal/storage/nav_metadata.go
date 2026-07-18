@@ -24,51 +24,51 @@ func (s *Storage) GetNavMetadata(userID int64) (NavMetadata, error) {
 			   FROM entries e
 			   JOIN feeds f ON f.id = e.feed_id
 			   JOIN categories c ON c.id = f.category_id
-			  WHERE e.user_id = $1
+			  WHERE e.user_id = ?1
 			    AND e.status = 'unread'
-			    AND f.hide_globally IS FALSE
-			    AND c.hide_globally IS FALSE
+			    AND f.hide_globally = 0
+			    AND c.hide_globally = 0
 			) AS count_unread,
 			(SELECT EXISTS(
 				SELECT 1
 				  FROM integrations
-				 WHERE user_id = $1
+				 WHERE user_id = ?1
 				   AND (
-					pinboard_enabled='t' OR
-					instapaper_enabled='t' OR
-					wallabag_enabled='t' OR
-					notion_enabled='t' OR
-					nunux_keeper_enabled='t' OR
-					espial_enabled='t' OR
-					readwise_enabled='t' OR
-					linkace_enabled='t' OR
-					linkding_enabled='t' OR
-					linktaco_enabled='t' OR
-					linkwarden_enabled='t' OR
-					apprise_enabled='t' OR
-					shiori_enabled='t' OR
-					readeck_enabled='t' OR
-					shaarli_enabled='t' OR
-					webhook_enabled='t' OR
-					omnivore_enabled='t' OR
-					karakeep_enabled='t' OR
-					raindrop_enabled='t' OR
-					betula_enabled='t' OR
-					cubox_enabled='t' OR
-					discord_enabled='t' OR
-					slack_enabled='t' OR
-					archiveorg_enabled='t'
+				pinboard_enabled = 1 OR
+				instapaper_enabled = 1 OR
+				wallabag_enabled = 1 OR
+				notion_enabled = 1 OR
+				nunux_keeper_enabled = 1 OR
+				espial_enabled = 1 OR
+				readwise_enabled = 1 OR
+				linkace_enabled = 1 OR
+				linkding_enabled = 1 OR
+				linktaco_enabled = 1 OR
+				linkwarden_enabled = 1 OR
+				apprise_enabled = 1 OR
+				shiori_enabled = 1 OR
+				readeck_enabled = 1 OR
+				shaarli_enabled = 1 OR
+				webhook_enabled = 1 OR
+				omnivore_enabled = 1 OR
+				karakeep_enabled = 1 OR
+				raindrop_enabled = 1 OR
+				betula_enabled = 1 OR
+				cubox_enabled = 1 OR
+				discord_enabled = 1 OR
+				slack_enabled = 1 OR
+				archiveorg_enabled = 1
 				   )
 			)) AS has_save_entry,
 	`
 	if config.Opts.PollingParsingErrorLimit() == 0 {
 		// zero means unlimited amount of accepted errors
-		query += `(SELECT $2) AS count_error_feeds`
+		query += `(SELECT ?2) AS count_error_feeds`
 	} else {
 		query += `(SELECT count(*)
 			   FROM feeds
-			  WHERE user_id = $1
-			    AND parsing_error_count >= $2
+			  WHERE user_id = ?1
+			    AND parsing_error_count >= ?2
 			) AS count_error_feeds
 			 `
 	}

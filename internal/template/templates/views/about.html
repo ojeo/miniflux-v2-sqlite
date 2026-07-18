@@ -32,7 +32,7 @@
         <li><strong>{{ t "page.about.build_date" }}</strong> {{ .build_date }}</li>
     	<li><strong>{{t "page.about.go_version" }}</strong> {{ .go_version }}</li>
     {{ if .user.IsAdmin }}
-        <li><strong>{{ t "page.about.postgres_version" }}</strong> {{ .postgres_version }}</li>
+        <li><strong>{{ t "page.about.sqlite_version" }}</strong> {{ .sqlite_version }}</li>
         <li><strong>{{t "page.about.db_usage" }}</strong> {{ .db_usage }}</li>
     {{ end }}
     </ul>

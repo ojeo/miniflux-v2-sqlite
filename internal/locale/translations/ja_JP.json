@@ -434,6 +434,8 @@
     "page.about.global_config_options": "グローバル構成オプション",
     "page.about.go_version": "Go バージョン:",
     "page.about.license": "ライセンス:",
+    "page.about.sqlite_version": "SQLite バージョン:",
+
     "page.about.postgres_version": "Postgres バージョン:",
     "page.about.title": "ソフトウェア情報",
     "page.about.version": "バージョン:",

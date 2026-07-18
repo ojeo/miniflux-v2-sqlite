@@ -437,6 +437,8 @@
     "page.about.global_config_options": "Globale Configuratie Opties",
     "page.about.go_version": "Go versie:",
     "page.about.license": "Licentie:",
+    "page.about.sqlite_version": "SQLite versie:",
+
     "page.about.postgres_version": "Postgres versie:",
     "page.about.title": "Over",
     "page.about.version": "Versie:",

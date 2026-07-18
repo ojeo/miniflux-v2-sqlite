@@ -10,8 +10,6 @@ import (
 	"strings"
 
 	"miniflux.app/v2/internal/model"
-
-	"github.com/lib/pq"
 )
 
 // EnclosuresByEntryID returns all enclosures for the given entry.
@@ -28,7 +26,7 @@ func (s *Storage) EnclosuresByEntryID(entryID int64) (model.EnclosureList, error
 		FROM
 			enclosures
 		WHERE
-			entry_id = $1
+			entry_id = ?1
 		ORDER BY id ASC
 	`
 
@@ -63,6 +61,7 @@ func (s *Storage) EnclosuresByEntryID(entryID int64) (model.EnclosureList, error
 
 // EnclosuresByEntryIDs returns enclosures for the given entries, grouped by entry ID.
 func (s *Storage) EnclosuresByEntryIDs(entryIDs []int64) (map[int64]model.EnclosureList, error) {
+	placeholders, args := inClauseInt64(1, entryIDs)
 	query := `
 		SELECT
 			id,
@@ -75,11 +74,11 @@ func (s *Storage) EnclosuresByEntryIDs(entryIDs []int64) (map[int64]model.Enclos
 		FROM
 			enclosures
 		WHERE
-			entry_id = ANY($1)
+			entry_id IN (` + placeholders + `)
 		ORDER BY id ASC
 	`
 
-	rows, err := s.db.Query(query, pq.Array(entryIDs))
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: unable to fetch enclosures: %w", err)
 	}
@@ -121,7 +120,7 @@ func (s *Storage) EnclosureByID(userID, enclosureID int64) (*model.Enclosure, er
 		FROM
 			enclosures
 		WHERE
-			id = $1 AND user_id = $2
+			id = ?1 AND user_id = ?2
 	`
 
 	row := s.db.QueryRow(query, enclosureID, userID)
@@ -156,8 +155,8 @@ func (s *Storage) createEnclosure(tx *sql.Tx, enclosure *model.Enclosure) error 
 		INSERT INTO enclosures
 			(url, size, mime_type, entry_id, user_id, media_progression)
 		VALUES
-			($1, $2, $3, $4, $5, $6)
-		ON CONFLICT (user_id, entry_id, encode(sha256(url::bytea), 'hex')) DO NOTHING
+			(?1, ?2, ?3, ?4, ?5, ?6)
+		ON CONFLICT (user_id, entry_id, url) DO NOTHING
 		RETURNING
 			id
 	`
@@ -183,7 +182,7 @@ func (s *Storage) updateEnclosures(tx *sql.Tx, entry *model.Entry) error {
 			DELETE FROM
 				enclosures
 			WHERE
-				user_id=$1 AND entry_id=$2
+				user_id=?1 AND entry_id=?2
 		`
 
 		_, err := tx.Exec(query, entry.UserID, entry.ID)
@@ -202,14 +201,15 @@ func (s *Storage) updateEnclosures(tx *sql.Tx, entry *model.Entry) error {
 		}
 	}
 
+	placeholders, args := inClauseString(3, sqlValues)
 	query := `
 		DELETE FROM
 			enclosures
 		WHERE
-			user_id=$1 AND entry_id=$2 AND url <> ALL($3)
+			user_id=?1 AND entry_id=?2 AND url NOT IN (` + placeholders + `)
 	`
 
-	_, err := tx.Exec(query, entry.UserID, entry.ID, pq.Array(sqlValues))
+	_, err := tx.Exec(query, append([]any{entry.UserID, entry.ID}, args...)...)
 	if err != nil {
 		return fmt.Errorf(`store: unable to delete old enclosures: %v`, err)
 	}
@@ -223,14 +223,14 @@ func (s *Storage) UpdateEnclosure(enclosure *model.Enclosure) error {
 		UPDATE
 			enclosures
 		SET
-			url=$1,
-			size=$2,
-			mime_type=$3,
-			entry_id=$4,
-			user_id=$5,
-			media_progression=$6
+			url=?1,
+			size=?2,
+			mime_type=?3,
+			entry_id=?4,
+			user_id=?5,
+			media_progression=?6
 		WHERE
-			id=$7
+			id=?7
 	`
 	_, err := s.db.Exec(query,
 		enclosure.URL,

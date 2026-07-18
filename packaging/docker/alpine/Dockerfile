@@ -16,7 +16,15 @@ LABEL org.opencontainers.image.documentation=https://miniflux.app/docs/
 
 EXPOSE 8080
 ENV LISTEN_ADDR=0.0.0.0:8080
-RUN apk --no-cache add ca-certificates tzdata
+ENV DATABASE_URL=/var/lib/miniflux/miniflux.db
+
+RUN apk --no-cache add ca-certificates tzdata su-exec && \
+    mkdir -p /var/lib/miniflux
+
 COPY --from=build /go/src/app/miniflux /usr/bin/miniflux
-USER 65534
+COPY packaging/docker/alpine/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+VOLUME /var/lib/miniflux
+ENTRYPOINT ["/entrypoint.sh"]
 CMD ["/usr/bin/miniflux"]

@@ -6,6 +6,7 @@ package storage // import "miniflux.app/v2/internal/storage"
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"time"
 )
 
@@ -22,7 +23,7 @@ func NewStorage(db *sql.DB) *Storage {
 // DatabaseVersion returns the version of the database which is in use.
 func (s *Storage) DatabaseVersion() string {
 	var dbVersion string
-	err := s.db.QueryRow(`SELECT current_setting('server_version')`).Scan(&dbVersion)
+	err := s.db.QueryRow(`SELECT sqlite_version()`).Scan(&dbVersion)
 	if err != nil {
 		return err.Error()
 	}
@@ -45,12 +46,33 @@ func (s *Storage) DBStats() sql.DBStats {
 
 // DBSize returns how much size the database is using in a pretty way.
 func (s *Storage) DBSize() (string, error) {
-	var size string
+	var bytes int64
 
-	err := s.db.QueryRow("SELECT pg_size_pretty(pg_database_size(current_database()))").Scan(&size)
+	err := s.db.QueryRow("SELECT (SELECT page_count FROM pragma_page_count) * (SELECT page_size FROM pragma_page_size)").Scan(&bytes)
 	if err != nil {
 		return "", err
 	}
 
-	return size, nil
+	return formatBytes(bytes), nil
+}
+
+// Vacuum rebuilds the database file to reclaim free space left after
+// deletions. SQLite does not shrink files automatically.
+func (s *Storage) Vacuum() error {
+	_, err := s.db.Exec(`VACUUM`)
+	return err
+}
+
+// formatBytes renders a byte count as a human-readable string.
+func formatBytes(b int64) string {
+	const unit = 1024
+	if b < unit {
+		return fmt.Sprintf("%d B", b)
+	}
+	div, exp := int64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTPE"[exp])
 }

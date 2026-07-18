@@ -434,6 +434,8 @@
     "page.about.global_config_options": "Pengaturan Konfigurasi Global",
     "page.about.go_version": "Versi Go:",
     "page.about.license": "Lisensi:",
+    "page.about.sqlite_version": "Versi SQLite:",
+
     "page.about.postgres_version": "Versi Postgres:",
     "page.about.title": "Tentang",
     "page.about.version": "Versi:",

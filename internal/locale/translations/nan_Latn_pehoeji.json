@@ -434,6 +434,8 @@
     "page.about.global_config_options": "Choân-he̍k siat-tēng soán-hāng",
     "page.about.go_version": "Go pán-pún:",
     "page.about.license": "Pàng-koân:",
+    "page.about.sqlite_version": "SQLite pán-pún:",
+
     "page.about.postgres_version": "Postgres pán-pún:",
     "page.about.title": "Iú-koan",
     "page.about.version": "Pán-pún:",

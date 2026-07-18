@@ -434,6 +434,8 @@
     "page.about.global_config_options": "全局配置选项",
     "page.about.go_version": "Go 版本：",
     "page.about.license": "许可证：",
+    "page.about.sqlite_version": "SQLite 版本：",
+
     "page.about.postgres_version": "Postgres 版本：",
     "page.about.title": "关于",
     "page.about.version": "版本：",

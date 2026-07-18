@@ -437,6 +437,8 @@
     "page.about.global_config_options": "Γενικές ρυθμίσεις",
     "page.about.go_version": "Έκδοση Go:",
     "page.about.license": "Άδεια:",
+    "page.about.sqlite_version": "Έκδοση SQLite:",
+
     "page.about.postgres_version": "Έκδοση Postgres:",
     "page.about.title": "Περί",
     "page.about.version": "Έκδοση:",

@@ -6,6 +6,47 @@ It's simple, fast, lightweight and super easy to install.
 
 Official website: <https://miniflux.app>
 
+> **SQLite Edition**
+>
+> This fork replaces PostgreSQL with [SQLite](https://www.sqlite.org/) via
+> [`modernc.org/sqlite`](https://pkg.go.dev/modernc.org/sqlite) — a pure-Go
+> driver with **zero CGO dependencies**.  The entire application compiles
+> into a single static binary, eliminating all external database requirements.
+>
+> **Key implementation details**
+>
+> - **Driver**: `modernc.org/sqlite` (no CGO), WAL journal mode, single
+>   connection pool (MaxOpenConns=1) to avoid `SQLITE_BUSY` under concurrent
+>   feed refreshes.
+> - **Connection**: `DATABASE_URL` accepts a file path (`miniflux.db`) or
+>   `:memory:`; defaults to `/var/lib/miniflux/miniflux.db` in the Docker image.
+> - **Schema**: single-version initial migration — all tables, indexes,
+>   and FTS5 triggers are created in one step.
+> - **Full-text search**: FTS5 external-content virtual table (`entries_fts`)
+>   with `unicode61` tokenizer, kept in sync via INSERT/UPDATE/DELETE triggers.
+>   Relevance ranking (`ts_rank`) is dropped; results are ordered by
+>   `published_at`.
+> - **Data types**: `timestamptz` → TEXT (stored in Go's `time.Time.String()`
+>   format; read through a custom `model.Time` scanner), `bool` → INTEGER,
+>   `text[]` → JSON TEXT, `inet` → TEXT, `jsonb` → TEXT.
+> - **SQL rewrites**: `$N` → `?N`, `now()` → `strftime()`,
+>   `= ANY()` → `IN (...)`, `ILIKE` → `LOWER LIKE`, data-modifying CTEs
+>   (`WITH ... UPDATE/DELETE ... RETURNING`) are split into individual
+>   statements.
+> - **Time handling**: `model.Time.Scan` parses 8 timestamp layouts and
+>   strips Go monotonic-clock (`m=+...`) and double‑timezone (`+0800 +0800`)
+>   suffixes.
+> - **Disk space**: `VACUUM` runs automatically after cleanup tasks and
+>   `FlushHistory` to reclaim freed pages.
+> - **Docker**: Alpine‑based image with an `entrypoint.sh` that fixes volume
+>   permissions at startup, then drops to `nobody` (UID 65534) via `su‑exec`.
+>
+> See **[MIGRATION_SQLITE.md](MIGRATION_SQLITE.md)** for the full migration
+> report — file changes, functional differences, bug fix history, Docker
+> deployment guide, and known limitations.
+
+
+
 Features
 --------
 
@@ -19,7 +60,7 @@ Features
 - Share individual articles publicly.
 - Fetches website icons (favicons).
 - Saves articles to third-party services.
-- Provides full-text search (powered by Postgres).
+- Provides full-text search (powered by SQLite FTS5).
 - Available in 20 languages: Portuguese (Brazilian), Chinese (Simplified and Traditional), Dutch, English (US), Finnish, French, German, Greek, Hindi, Indonesian, Italian, Japanese, Polish, Romanian, Russian, Taiwanese POJ, Ukrainian, Spanish, and Turkish.
 
 ### Privacy and Security
@@ -90,7 +131,7 @@ Features
 
 - Written in [Go (Golang)](https://golang.org/).
 - Single binary compiled statically without dependency.
-- Works only with [PostgreSQL](https://www.postgresql.org/).
+- Works only with [SQLite](https://www.sqlite.org/) (embedded, no external server required).
 - Does not use any ORM or any complicated frameworks.
 - Uses modern vanilla JavaScript only when necessary.
 - All static files are bundled into the application binary using the Go `embed` package.

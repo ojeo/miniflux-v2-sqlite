@@ -440,6 +440,8 @@
     "page.about.global_config_options": "Параметри глобальної конфігурації",
     "page.about.go_version": "Версія Go:",
     "page.about.license": "Ліцензія:",
+    "page.about.sqlite_version": "Версія SQLite:",
+
     "page.about.postgres_version": "Версія Postgres:",
     "page.about.title": "Про додадок",
     "page.about.version": "Версія:",

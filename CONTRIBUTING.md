@@ -36,7 +36,7 @@ When reporting bugs:
 
 - **Git**
 - **Go >= 1.26**
-- **PostgreSQL**
+- **SQLite** (embedded, no external server required)
 
 ### Getting Started
 
@@ -59,18 +59,14 @@ When reporting bugs:
 
 ### Database Setup
 
-For development and testing, you can run a local PostgreSQL database with Docker:
+Miniflux uses an embedded SQLite database, so no external database server is required. By default the data is stored in a file named `miniflux.db` in the current working directory. You can override the location with the `DATABASE_URL` environment variable (e.g. `DATABASE_URL=/var/lib/miniflux/miniflux.db` or `DATABASE_URL=:memory:` for an in-memory database).
+
+For development and testing, simply point `DATABASE_URL` at a file path:
 
 ```bash
-# Start PostgreSQL container
-docker run --rm --name miniflux2-db -p 5432:5432 \
-  -e POSTGRES_DB=miniflux2 \
-  -e POSTGRES_USER=postgres \
-  -e POSTGRES_PASSWORD=postgres \
-  postgres
+export DATABASE_URL="miniflux_test.db"
+make run
 ```
-
-You can also use an existing PostgreSQL instance. Make sure to set the `DATABASE_URL` environment variable accordingly.
 
 ## Development Workflow
 
@@ -161,7 +157,7 @@ When creating a pull request, please include:
 
 ### Integration Tests
 - Add integration tests for new API endpoints
-- Tests run against a real PostgreSQL database
+- Tests run against a real SQLite database (file or `:memory:`)
 - Ensure tests clean up after themselves
 
 ## Communication

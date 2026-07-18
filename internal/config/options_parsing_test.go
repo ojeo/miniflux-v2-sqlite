@@ -319,8 +319,8 @@ func TestCreateAdminOptionParsing(t *testing.T) {
 func TestDatabaseMaxConnsOptionParsing(t *testing.T) {
 	configParser := NewConfigParser()
 
-	if configParser.options.DatabaseMaxConns() != 20 {
-		t.Fatalf("Expected DATABASE_MAX_CONNS to be 20 by default")
+	if configParser.options.DatabaseMaxConns() != 1 {
+		t.Fatalf("Expected DATABASE_MAX_CONNS to be 1 by default")
 	}
 
 	if err := configParser.parseLines([]string{"DATABASE_MAX_CONNS=10"}); err != nil {
@@ -351,7 +351,7 @@ func TestDatabaseMinConnsOptionParsing(t *testing.T) {
 func TestDatabaseURLOptionParsing(t *testing.T) {
 	configParser := NewConfigParser()
 
-	if configParser.options.DatabaseURL() != "user=postgres password=postgres dbname=miniflux2 sslmode=disable" {
+	if configParser.options.DatabaseURL() != "miniflux.db" {
 		t.Fatal("Expected DATABASE_URL to have default value")
 	}
 

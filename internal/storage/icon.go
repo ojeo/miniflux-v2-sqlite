@@ -15,10 +15,10 @@ import (
 
 // HasFeedIcon reports whether the specified feed already has an associated icon record.
 func (s *Storage) HasFeedIcon(feedID int64) bool {
-	var result bool
-	query := `SELECT true FROM feed_icons WHERE feed_id=$1 LIMIT 1`
+	var result int
+	query := `SELECT 1 FROM feed_icons WHERE feed_id=?1 LIMIT 1`
 	s.db.QueryRow(query, feedID).Scan(&result)
-	return result
+	return result == 1
 }
 
 // IconByID fetches a single icon by its internal identifier, returning nil when it is not found.
@@ -32,7 +32,7 @@ func (s *Storage) IconByID(iconID int64) (*model.Icon, error) {
 			content,
 			external_id
 		FROM icons
-		WHERE id=$1`
+		WHERE id=?1`
 	err := s.db.QueryRow(query, iconID).Scan(&icon.ID, &icon.Hash, &icon.MimeType, &icon.Content, &icon.ExternalID)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
@@ -55,7 +55,7 @@ func (s *Storage) IconByExternalID(externalIconID string) (*model.Icon, error) {
 			content,
 			external_id
 		FROM icons
-		WHERE external_id=$1
+		WHERE external_id=?1
 	`
 	err := s.db.QueryRow(query, externalIconID).Scan(&icon.ID, &icon.Hash, &icon.MimeType, &icon.Content, &icon.ExternalID)
 	switch {
@@ -81,7 +81,7 @@ func (s *Storage) IconByFeedID(userID, feedID int64) (*model.Icon, error) {
 		INNER JOIN feed_icons ON feed_icons.icon_id=icons.id
 		INNER JOIN feeds ON feeds.id=feed_icons.feed_id
 		WHERE
-			feeds.user_id=$1 AND feeds.id=$2
+			feeds.user_id=?1 AND feeds.id=?2
 		LIMIT 1
 	`
 	var icon model.Icon
@@ -103,13 +103,13 @@ func (s *Storage) StoreFeedIcon(feedID int64, icon *model.Icon) error {
 		return fmt.Errorf(`store: unable to start transaction: %v`, err)
 	}
 
-	err = tx.QueryRow(`SELECT id FROM icons WHERE hash=$1`, icon.Hash).Scan(&icon.ID)
+	err = tx.QueryRow(`SELECT id FROM icons WHERE hash=?1`, icon.Hash).Scan(&icon.ID)
 	if errors.Is(err, sql.ErrNoRows) {
 		query := `
 			INSERT INTO icons
 				(hash, mime_type, content, external_id)
 			VALUES
-				($1, $2, $3, $4)
+				(?1, ?2, ?3, ?4)
 			RETURNING
 				id
 		`
@@ -129,12 +129,12 @@ func (s *Storage) StoreFeedIcon(feedID int64, icon *model.Icon) error {
 		return fmt.Errorf(`store: unable to fetch icon by hash %q: %v`, icon.Hash, err)
 	}
 
-	if _, err := tx.Exec(`DELETE FROM feed_icons WHERE feed_id=$1`, feedID); err != nil {
+	if _, err := tx.Exec(`DELETE FROM feed_icons WHERE feed_id=?1`, feedID); err != nil {
 		tx.Rollback()
 		return fmt.Errorf(`store: unable to delete feed icon: %v`, err)
 	}
 
-	if _, err := tx.Exec(`INSERT INTO feed_icons (feed_id, icon_id) VALUES ($1, $2)`, feedID, icon.ID); err != nil {
+	if _, err := tx.Exec(`INSERT INTO feed_icons (feed_id, icon_id) VALUES (?1, ?2)`, feedID, icon.ID); err != nil {
 		tx.Rollback()
 		return fmt.Errorf(`store: unable to associate feed and icon: %v`, err)
 	}
@@ -178,7 +178,7 @@ func (s *Storage) Icons(userID int64) (model.Icons, error) {
 		INNER JOIN feed_icons ON feed_icons.icon_id=icons.id
 		INNER JOIN feeds ON feeds.id=feed_icons.feed_id
 		WHERE
-			feeds.user_id=$1
+			feeds.user_id=?1
 	`
 	rows, err := s.db.Query(query, userID)
 	if err != nil {

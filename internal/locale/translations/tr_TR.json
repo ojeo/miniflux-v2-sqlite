@@ -437,6 +437,8 @@
     "page.about.global_config_options": "Global yapılandırma seçenekleri",
     "page.about.go_version": "Go sürümü:",
     "page.about.license": "Lisans:",
+    "page.about.sqlite_version": "SQLite sürümü:",
+
     "page.about.postgres_version": "Postgres sürümü:",
     "page.about.title": "Hakkında",
     "page.about.version": "Sürüm:",
