@@ -1,5 +1,5 @@
 APP             := miniflux
-DOCKER_IMAGE    := miniflux/miniflux
+DOCKER_IMAGE    := miniflux/miniflux-sqlite
 VERSION         := $(shell git describe --tags --exact-match 2>/dev/null)
 LD_FLAGS        := "-s -w -X 'miniflux.app/v2/internal/version.Version=$(VERSION)'"
 PKG_LIST        := $(shell go list ./... | grep -v /vendor/)

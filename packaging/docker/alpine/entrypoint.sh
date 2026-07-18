@@ -1,6 +1,11 @@
 #!/bin/sh
-# Fix ownership of /var/lib/miniflux on startup so the non-root user (65534)
+# Fix ownership of /var/lib/miniflux on startup so the miniflux user
 # can write the SQLite database file, regardless of how the volume was mounted.
-chown 65534 /var/lib/miniflux 2>/dev/null
+#
+# - Without external volume: the directory was created during build with
+#   miniflux:miniflux ownership. This is a no-op.
+# - With external volume: the mounted directory's ownership is updated to
+#   miniflux:miniflux, ensuring writability inside the container.
+chown miniflux /var/lib/miniflux 2>/dev/null || true
 
-exec su-exec 65534 "$@"
+exec su-exec miniflux "$@"

@@ -19,7 +19,10 @@ ENV LISTEN_ADDR=0.0.0.0:8080
 ENV DATABASE_URL=/var/lib/miniflux/miniflux.db
 
 RUN apk --no-cache add ca-certificates tzdata su-exec && \
-    mkdir -p /var/lib/miniflux
+    addgroup -S miniflux && \
+    adduser -S -G miniflux -h /var/lib/miniflux miniflux && \
+    mkdir -p /var/lib/miniflux && \
+    chown miniflux /var/lib/miniflux
 
 COPY --from=build /go/src/app/miniflux /usr/bin/miniflux
 COPY packaging/docker/alpine/entrypoint.sh /entrypoint.sh

@@ -8,7 +8,7 @@ Official website: <https://miniflux.app>
 
 > **SQLite Edition**
 >
-> This fork replaces PostgreSQL with [SQLite](https://www.sqlite.org/) via
+> This fork, based on Miniflux 2.3.2, replaces PostgreSQL with [SQLite](https://www.sqlite.org/) via
 > [`modernc.org/sqlite`](https://pkg.go.dev/modernc.org/sqlite) — a pure-Go
 > driver with **zero CGO dependencies**.  The entire application compiles
 > into a single static binary, eliminating all external database requirements.
@@ -149,6 +149,77 @@ Features
 - Has a comprehensive testsuite, with both unit tests and integration tests.
 - Only uses a couple of MB of memory and a negligible amount of CPU, even with several hundreds of feeds.
 - Respects/sends Last-Modified, If-Modified-Since, If-None-Match, Cache-Control, Expires and ETags headers, and has a default polling interval of 1h.
+
+Building
+--------
+
+Requires [Go](https://go.dev/) and [Docker](https://www.docker.com/) (for images).
+
+### Compile
+
+| Command | Description |
+|---------|-------------|
+| `make miniflux` | Build locally (PIE) |
+| `make linux-amd64` | Cross-compile Linux amd64 |
+| `make linux-arm64` | Cross-compile Linux arm64 |
+| `make linux-armv7` | Cross-compile Linux armv7 |
+| `make linux-riscv64` | Cross-compile Linux riscv64 |
+| `make darwin-amd64` | Cross-compile macOS amd64 |
+| `make darwin-arm64` | Cross-compile macOS arm64 |
+| `make freebsd-amd64` | Cross-compile FreeBSD amd64 |
+| `make openbsd-amd64` | Cross-compile OpenBSD amd64 |
+| `make build` | Build all platforms |
+
+### Run locally
+
+| Command | Description |
+|---------|-------------|
+| `make run` | Run with admin account (`admin` / `test123`) |
+
+### Docker
+
+| Command | Description |
+|---------|-------------|
+| `make docker-image` | Build Alpine image |
+| `make docker-image-distroless` | Build Distroless image |
+| `make docker-images` | Multi-platform build and push |
+
+> Docker image build requires a tagged commit (`git tag`). To build with a custom tag directly:
+> ```bash
+> docker build --pull -t miniflux/miniflux-sqlite:latest -f packaging/docker/alpine/Dockerfile .
+> ```
+
+**Alpine vs Distroless**
+
+| Feature | Alpine | Distroless |
+|---------|--------|-------------|
+| External volume permissions | Auto-fixed via `entrypoint.sh` | Must chown host dir to `65532` |
+| Shell in container | ✅ | ❌ |
+| Image size | ~15 MB | ~30 MB |
+| Recommendation | ✅ **Preferred** | Use for internal/k8s volumes |
+
+> **Distroless note**: Distroless has no shell, so `entrypoint.sh` cannot run. Anonymous volumes work out of the box, but external mounts (`-v /host/path:/var/lib/miniflux`) require the host directory to be owned by UID 65532:
+> ```bash
+> chown 65532 /host/path
+> docker run -v /host/path:/var/lib/miniflux miniflux/miniflux-sqlite:latest
+> ```
+
+### Packages
+
+| Command | Description |
+|---------|-------------|
+| `make rpm` | Build RPM package |
+| `make debian` | Build deb package |
+| `make debian-packages` | Build all architecture deb packages |
+
+### Test & Clean
+
+| Command | Description |
+|---------|-------------|
+| `make test` | Run unit tests |
+| `make lint` | Run linters |
+| `make integration-test` | Run integration tests |
+| `make clean` | Remove build artifacts |
 
 Documentation
 -------------
