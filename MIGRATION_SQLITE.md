@@ -198,7 +198,7 @@ CMD ["/usr/bin/miniflux"]
 
 ```sh
 #!/bin/sh
-chown 65534 /var/lib/miniflux 2>/dev/null
+chown -R 65534 /var/lib/miniflux 2>/dev/null
 exec su-exec 65534 "$@"
 ```
 

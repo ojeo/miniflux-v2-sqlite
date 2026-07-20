@@ -34,7 +34,7 @@ Miniflux 是一个极简且立场鲜明的 RSS 阅读器。
 > - **磁盘空间**：`VACUUM` 在清理任务和 `FlushHistory` 后自动执行，
 >   回收已释放的页面。
 > - **Docker**：基于 Alpine 的镜像，通过 `entrypoint.sh` 在启动时修正卷权限，
->   然后通过 `su-exec` 降权为 `miniflux` 用户运行。
+>   然后通过 `su-exec` 降权为 `nobody`（UID 65534）运行。
 >
 > 参见 **[MIGRATION_SQLITE.md](MIGRATION_SQLITE.md)** 获取完整迁移报告 —
 > 文件变更、功能差异、Bug 修复历史、Docker 部署指南和已知限制。
@@ -181,21 +181,6 @@ Miniflux 是一个极简且立场鲜明的 RSS 阅读器。
 > Docker 镜像构建需要已打 tag 的提交（`git tag`）。如需直接使用自定义标签构建：
 > ```bash
 > docker build --pull -t miniflux/miniflux-sqlite:latest -f packaging/docker/alpine/Dockerfile .
-> ```
-
-**Alpine 与 Distroless 对比**
-
-| 特性 | Alpine | Distroless |
-|------|--------|-------------|
-| 外部卷权限 | `entrypoint.sh` 自动修正 | 需手动 `chown` 宿主机目录为 `65532` |
-| 容器内 Shell | ✅ | ❌ |
-| 镜像大小 | ~15 MB | ~30 MB |
-| 推荐 | ✅ **首选** | 仅限内部卷/k8s 场景 |
-
-> **Distroless 注意**：Distroless 无 Shell，无法运行 `entrypoint.sh`。匿名卷可直接使用，但外部挂载（`-v /host/path:/var/lib/miniflux`）需要宿主机目录属主为 UID 65532：
-> ```bash
-> chown 65532 /host/path
-> docker run -v /host/path:/var/lib/miniflux miniflux/miniflux-sqlite:latest
 > ```
 
 ### 软件包
