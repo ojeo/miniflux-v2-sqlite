@@ -2,7 +2,7 @@
 
 > **状态**：编译通过 / vet 通过 / 全量测试通过 / 生产运行验证通过  
 > **迁移方式**：纯 Go 驱动 `modernc.org/sqlite`（无 CGO）  
-> **最后更新**：2026-07-18
+> **最后更新**：2026-07-22
 
 ---
 
@@ -13,7 +13,8 @@
 | 文件 | 说明 |
 |------|------|
 | `internal/database/sqlite.go` | SQLite 连接池 + DSN（单连接 / busy_timeout=30000 / WAL / foreign_keys） |
-| `internal/model/sqlscan.go` | `BoolScanner`、`StringArrayScanner`、`Time` 扫描器、`TagsValue`、`JSONValue` |
+| `internal/database/engine.go` | 数据库抽象接口 `Engine`（`DriverName` + `Open`），`SQLite` 实现 |
+| `internal/model/sqlscan.go` | `BoolScanner`、`StringArrayScanner`、`Time` 扫描器（含解析缓存）、`TagsValue`、`JSONValue` |
 | `internal/storage/helpers.go` | `inClauseInt64` / `inClauseString` 替代 `pq.Array` / `= ANY()` |
 | `internal/storage/storage_test.go` | SQLite 集成测试（迁移→建表→CRUD→FTS5→tags→bool→时间扫描） |
 | `packaging/docker/alpine/entrypoint.sh` | 入口脚本：root 修目录权限后 su-exec 切 nobody |
@@ -35,8 +36,8 @@
 | `internal/database/database.go` | `$1`→`?`、`TRUNCATE`→`DELETE` |
 | `internal/config/options.go` | `DATABASE_URL`→`miniflux.db`；`DATABASE_MAX_CONNS`→`1` |
 | `internal/config/options_parsing_test.go` | 默认值 + `MAX_CONNS` 断言更新 |
-| `internal/storage/entry.go` | tsvector/CTE/starred/time scan/`changed_at`/Archiving/MarkFeedAsRead/VACUUM |
-| `internal/storage/entry_query_builder.go` | FTS5 MATCH、tags→json_each、bool/time scan、ORDER BY 表前缀 |
+| `internal/storage/entry.go` | CTE→事务包裹、`published_at` UTC 归一化、所有时间比较→`CAST(strftime('%s', ...) AS INTEGER)` |
+| `internal/storage/entry_query_builder.go` | FTS5 MATCH + bm25()、tags→json_each、bool/time scan、所有时间比较→`CAST(strftime('%s', ...) AS INTEGER)`、ORDER BY 表前缀 |
 | `internal/storage/entry_pagination_builder.go` | FTS5/tags/`$N`→`?N`/`quoteIdent` |
 | `internal/storage/feed.go` | CheckedAt time scan、bool scan、`SELECT true`→`SELECT 1` |
 | `internal/storage/feed_query_builder.go` | `$N` residual、`at time zone`、bool/time scan、ORDER BY 表前缀 |
@@ -46,14 +47,13 @@
 | `internal/storage/enclosure.go` | `pq.Array`→`inClauseInt64/String`、`ON CONFLICT` 键调整 |
 | `internal/storage/icon.go` | `SELECT true`→`SELECT 1` |
 | `internal/storage/webauthn.go` | `NullBool`→`bool`、`AddedOn`+`LastSeenOn` time scan |
-| `internal/storage/web_session.go` | `::interval`→应用层计算、`CreatedAt` time scan |
+| `internal/storage/web_session.go` | `::interval`→应用层计算、`CleanOldWebSessions` 时间比较→`strftime('%s')`、`CreatedAt` time scan |
 | `internal/storage/batch.go` | `$N`→`?N`、`IS false`→`= 0` |
 | `internal/storage/certificate_cache.go` | `::bytea`/`now()`→`strftime` |
 | `internal/storage/integration.go` | `='t'`→`= 1`、`SELECT true`→`SELECT 1` |
 | `internal/storage/nav_metadata.go` | `='t'`→`= 1`、`IS FALSE`→`= 0` |
-| `internal/storage/storage.go` | `server_version`→`sqlite_version()`、`pg_size_pretty`→`pragma`、`Vacuum()` |
-| `internal/cli/cleanup_tasks.go` | 清理末尾 VACUUM |
-| `internal/cli/cleanup_tasks.go` | 清理末尾 VACUUM |
+| `internal/storage/storage.go` | `server_version`→`sqlite_version()`、`pg_size_pretty`→`pragma`、`Vacuum()` + `VacuumIfNeeded()` |
+| `internal/cli/cleanup_tasks.go` | 清理末尾条件 VACUUM（freelist ≥ 20% 才触发） |
 | `internal/ui/about.go` | `postgres_version`→`sqlite_version` |
 | `internal/template/templates/views/about.html` | 同上 |
 | `internal/locale/translations/*.json`（24 文件） | 新增 `page.about.sqlite_version` |
@@ -73,7 +73,7 @@
 |---|---|---|
 | 索引引擎 | `tsvector` + GIN + `setweight` | FTS5 external-content 虚拟表 + 3 触发器 |
 | 查询语法 | `document_vectors @@ websearch_to_tsquery('…')` | `entries_fts MATCH ?` |
-| 结果排序 | 按 `ts_rank` 相关性 | **按时序排列**（无相关性排序） |
+| 结果排序 | 按 `ts_rank` 相关性 | 按 `bm25(entries_fts)` 相关性排序，回退为时序 |
 | 分词器 | PG 内置多语言 | `unicode61` |
 
 ### 2.2 数据库运维
@@ -84,7 +84,7 @@
 | 连接方式 | TCP `host:port/dbname` | 本地文件（`miniflux.db` / `:memory:`） |
 | 并发 | 原生多连接 | **单连接（MaxOpenConns=1）**，WAL 读不阻塞 |
 | 大小查询 | `pg_size_pretty(pg_database_size())` | `page_count * page_size` + `formatBytes` |
-| 磁盘回收 | 自动 | 定时清理末尾 + FlushHistory 后自动 `VACUUM` |
+| 磁盘回收 | 自动 | 定时清理末尾条件 VACUUM（freelist ≥ 20% 才触发） |
 
 ### 2.3 SQL 语法差异
 
@@ -95,7 +95,7 @@
 | `ON CONFLICT DO UPDATE` | **保留** | ≥3.35 |
 | `ILIKE` | `LOWER(x) LIKE LOWER(y)` | 索引不生效 |
 | `DISTINCT ON` | 窗口函数 `row_number() OVER (PARTITION BY ...)` | |
-| data-modifying CTE | **拆为多条 SQL** | SQLite 不支持 |
+| data-modifying CTE | **拆为多条 SQL + 事务包裹** | SQLite 不支持；单连接下事务内的拆分语句 de-facto 原子 |
 | `::bytea` / `::text` / `::interval` | **移除** | |
 | `at time zone` | **移除** | 应用层 `timezone.Convert` |
 | `now()` SQL 函数 | `strftime('%Y-%m-%dT%H:%M:%SZ', 'now')` | |
@@ -106,7 +106,7 @@
 | `ORDER BY "id"` | `e."id"` / `f."id"` 加表前缀 | 多表 JOIN 歧义 |
 | `TRUNCATE` | `DELETE FROM` | |
 | `'t'/'f'` | `= 1` / `= 0` | INTEGER 列 |
-| `published_at < ?`（TEXT 字符串比较） | **移除** | 跨时区不可靠 |
+| `published_at < ?, created_at < ?` 等时间比较 | `CAST(strftime('%s', column) AS INTEGER) < ?` | 替代 TEXT 字符串字典序，传参为 `time.Time.UTC().Unix()`，格式无关 |
 
 ### 2.4 数据类型映射
 
@@ -165,15 +165,19 @@
 - ` m=+163.78...` 单调时钟后缀（`strings.Index` 剥离）
 - ` +0800 +0800` 双数字时区（正则剥离）
 
-### MarkFeedAsRead 时区问题（#18）
+### MarkFeedAsRead 时区问题（#18）—— 已修复
 
-SQLite TEXT 列做纯字符串比较，不感知时区。`published_at` 存 `+0800` 格式，`time.Now()` 可能返回 `+0000` UTC，`17:17 +0800` > `10:XX +0000`（字符串序）。已移除 `published_at < ?` 过滤。
+原方案用 `published_at < ?` 跨时区字符串比较不可靠，因此移除了该过滤。
+
+**改进**：所有时间列比较统一使用 `CAST(strftime('%s', column) AS INTEGER) < ?N`，将 TEXT 转为 Unix 时间戳做整数比较，**与存储格式无关**（RFC3339 和 `time.Time.String()` 均可正确转换）。传参统一为 `time.Time.UTC().Unix()`（int64）。
+
+该方法已推广到以下 9 处：
+`MarkFeedAsRead`、`MarkCategoryAsRead`、`MarkAllAsReadBeforeDate`、`ArchiveEntries`、`CleanOldWebSessions`、`BeforePublishedDate`、`AfterPublishedDate`、`BeforeChangedDate`、`AfterChangedDate`。
 
 ### VACUUM 磁盘回收（#19）
 
-SQLite 删除数据后不自动缩文件。两处自动触发：
-- 定时清理任务末尾（每 24 小时）
-- `FlushHistory` 完成后
+SQLite 删除数据后不自动缩文件。
+**改进**：新增 `VacuumIfNeeded(threshold)` 方法，基于 `freelist_count / page_count` 判断是否需要 VACUUM（默认阈值 20%）。`FlushHistory` 不再单独触发 VACUUM，全部委托给定时清理任务。
 
 ---
 
@@ -255,7 +259,7 @@ curl -u admin:admin123 -X PUT http://localhost:8080/v1/users/1 \
 | `CLEANUP_ARCHIVE_UNREAD_DAYS` | 180 | 未读条目保留天数 |
 | `CLEANUP_ARCHIVE_BATCH_SIZE` | 10000 | 每次最大删除量 |
 
-自动流程：Sessions cleanup → Archive Read → Archive Unread → Orphan Icons → **VACUUM**
+自动流程：Sessions cleanup → Archive Read → Archive Unread → Orphan Icons → **条件 VACUUM（freelist ≥ 20%）**
 
 手动触发：`docker exec miniflux2 /usr/bin/miniflux -run-cleanup-tasks`
 
@@ -263,17 +267,61 @@ curl -u admin:admin123 -X PUT http://localhost:8080/v1/users/1 \
 
 ## 七、已知限制
 
-1. **全文搜索无相关性排序**
+1. **全文搜索相关性排序已支持 bm25()**，但分词器仍为 `unicode61`（对中日韩等 CJK 语言效果有限）
 2. **`ILIKE` 降级**——`LOWER LIKE` 无法使用索引
 3. **无 `FOR UPDATE SKIP LOCKED`**
-4. **无增量迁移**——单一初始 schema
+4. **无增量迁移**——单一初始 schema（`migrations` 数组保留版本号机制，可追加未来迁移）
 5. **单连接架构**——写入串行化，WAL 下读取不受限
 6. **不包含 PG→SQLite 数据迁移工具**
 7. **bind mount 需手动调目录权限**——命名卷无此问题
 
 ---
 
-## 八、验证状态
+## 八、2026-07-22 增强
+
+以下改进根据评估报告实施，进一步提升 SQLite 迁移的稳健性：
+
+### 8.1 时间比较统一使用 `CAST(strftime('%s', ...) AS INTEGER)`
+
+- 所有时间列比较（`published_at`、`changed_at`、`created_at`）统一使用 `CAST(strftime('%s', column) AS INTEGER) < ?N`
+- 传参改用 `before.UTC().Unix()`（int64），不依赖 TEXT 字典序
+- `strftime('%s', ...)` 对 RFC3339 和 `time.Time.String()` 两种存储格式均能正确转换为 Unix 时间戳
+- 涉及函数：
+  - `entry.go`：`MarkFeedAsRead`、`MarkCategoryAsRead`、`MarkAllAsReadBeforeDate`、`ArchiveEntries`
+  - `entry_query_builder.go`：`BeforePublishedDate`、`AfterPublishedDate`、`BeforeChangedDate`、`AfterChangedDate`
+  - `web_session.go`：`CleanOldWebSessions`
+- `createEntry` 将 `published_at` 归一化为 RFC3339 UTC 后入库，保证子秒级精度
+
+### 8.2 FTS5 搜索添加 bm25() 相关性排序
+- `EntryQueryBuilder.searchActive` 标记搜索状态
+- `WithSearchQuery` 自动在排序表达式首位置插入 `bm25(entries_fts)`
+- `fetchEntries` 搜索时 `INNER JOIN entries_fts` 提供排序所需的 FTS 表引用
+- 结果按 bm25 相关性排序，替换原按时序排列的游标
+
+### 8.3 CTE 拆分原子性增强
+- `ArchiveEntries` / `FlushHistory` 整个 SELECT→DELETE→INSERT 用事务包裹
+- SQLite 单连接模型下，事务内的拆分语句 de-facto 原子
+- 事务失败自动 Rollback（defer），保证数据一致性
+
+### 8.4 数据库抽象接口 `Engine`
+- 新增 `internal/database/engine.go`
+- 定义 `Engine` 接口（`DriverName()` + `Open()`）
+- `SQLite` 结构体实现，通过编译期断言 `var _ Engine = (*SQLite)(nil)` 验证
+- 为未来恢复多数据库支持预留清晰的扩展点
+
+### 8.5 VACUUM 策略优化
+- 新增 `VacuumIfNeeded(threshold)`：基于 `freelist_count / page_count` 判断
+- `FlushHistory` 不再触发 VACUUM，避免频繁全库重建
+- 定时清理任务使用 `VacuumIfNeeded(0.2)`——空闲页 < 20% 时跳过
+
+### 8.6 `model.Time` 解析缓存
+- `sync.Mutex` + `cachedLayout` 缓存上次成功的 layout 索引
+- 多数时间戳为 RFC3339，缓存命中时一次 `time.Parse` 即返回
+- 未命中遍历其余布局并更新缓存
+
+---
+
+## 九、验证状态
 
 | 检查项 | 结果 |
 |--------|------|
@@ -282,10 +330,10 @@ curl -u admin:admin123 -X PUT http://localhost:8080/v1/users/1 \
 | `go test ./...`（~56 包） | ✅ |
 | Docker 部署 + 抓取 + 阅读 | ✅ |
 | Web UI 标记已读 / 清空历史 | ✅ |
-| FTS5 搜索 | ✅ |
-| 时间戳读写（含中国时区/单调时钟） | ✅ |
+| FTS5 搜索（含 bm25 相关性排序） | ✅ |
+| 时间戳读写（含中国时区/单调时钟/`strftime('%s')` 整数比较） | ✅ |
 | Bool 列（INTEGER↔bool） | ✅ |
 | Tags JSON（`json_each`） | ✅ |
 | `RETURNING` / `ON CONFLICT DO UPDATE` | ✅ |
-| 过期清理 + VACUUM | ✅ |
+| 过期清理 + 条件 VACUUM | ✅ |
 | WebAuthn | ✅ |

@@ -57,7 +57,9 @@ func runCleanupTasks(store *storage.Storage) {
 	}
 
 	startTime = time.Now()
-	if err := store.Vacuum(); err != nil {
+	// Conditionally vacuum — only when the freelist exceeds 20 % of total
+	// pages. Frequent small deletions do not warrant a full-db rebuild.
+	if err := store.VacuumIfNeeded(0.2); err != nil {
 		slog.Error("Unable to vacuum database", slog.Any("error", err))
 	} else {
 		slog.Info("Database vacuum completed",

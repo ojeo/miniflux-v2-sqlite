@@ -63,6 +63,32 @@ func (s *Storage) Vacuum() error {
 	return err
 }
 
+// VacuumIfNeeded conditionally runs VACUUM only when the freelist exceeds the
+// given fraction of total pages.  threshold is in range (0, 1), e.g. 0.2 means
+// "vacuum only when ≥ 20 % of pages are free".
+//
+// This avoids expensive full-db rebuilds after minor deletions while still
+// reclaiming disk space when bulk cleanup has left significant free pages.
+func (s *Storage) VacuumIfNeeded(threshold float64) error {
+	if threshold <= 0 || threshold >= 1 {
+		return s.Vacuum()
+	}
+
+	var pageCount, freelistCount int64
+	if err := s.db.QueryRow("SELECT page_count FROM pragma_page_count").Scan(&pageCount); err != nil {
+		return fmt.Errorf("storage: unable to read page_count: %w", err)
+	}
+	if err := s.db.QueryRow("SELECT freelist_count FROM pragma_freelist_count").Scan(&freelistCount); err != nil {
+		return fmt.Errorf("storage: unable to read freelist_count: %w", err)
+	}
+
+	if pageCount == 0 || float64(freelistCount)/float64(pageCount) < threshold {
+		return nil // not worth the I/O cost
+	}
+
+	return s.Vacuum()
+}
+
 // formatBytes renders a byte count as a human-readable string.
 func formatBytes(b int64) string {
 	const unit = 1024

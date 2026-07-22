@@ -91,6 +91,10 @@ func (s *Storage) createEntry(tx *sql.Tx, entry *model.Entry) error {
 	// The WHERE NOT EXISTS guard makes the tombstone check atomic with the insert, so a
 	// concurrent archive committing between an earlier existence check and this statement
 	// cannot bring a deleted entry back as unread.
+	//
+	// published_at is stored as RFC3339 UTC TEXT.  Time comparisons use
+	// CAST(strftime('%s', published_at) AS INTEGER) so that both RFC3339
+	// and time.Time.String() formats produce the correct Unix timestamp.
 	query := `
 		INSERT INTO entries
 			(
@@ -130,6 +134,11 @@ func (s *Storage) createEntry(tx *sql.Tx, entry *model.Entry) error {
 		RETURNING
 			id, status, created_at, changed_at
 	`
+	// Normalise the published date to UTC so that TEXT comparisons against
+	// the stored column are reliable.  The original timezone is preserved
+	// via the user's tz setting when formatting for display.
+	publishedAt := entry.Date.UTC().Format(time.RFC3339)
+
 	var createdAt, changedAt model.Time
 	err := tx.QueryRow(
 		query,
@@ -137,7 +146,7 @@ func (s *Storage) createEntry(tx *sql.Tx, entry *model.Entry) error {
 		entry.Hash,
 		entry.URL,
 		entry.CommentsURL,
-		entry.Date,
+		publishedAt,
 		entry.Content,
 		entry.Author,
 		entry.UserID,
@@ -375,14 +384,21 @@ func (s *Storage) RefreshFeedEntries(userID, feedID int64, entries model.Entries
 //
 // The original PostgreSQL implementation used a data-modifying CTE
 // (WITH ... AS (DELETE ... RETURNING feed_id, hash) INSERT INTO tombstones ...)
-// which SQLite does not support.  We split it into three statements instead:
-// SELECT the candidates, DELETE them by primary key, INSERT tombstones.
+// which SQLite does not support.  We split it into three statements wrapped in
+// a single transaction so the SELECT → DELETE → INSERT is de-facto atomic
+// under SQLite's single-writer model.
 func (s *Storage) ArchiveEntries(status string, interval time.Duration, limit int) (int64, error) {
 	if interval < 0 || limit <= 0 {
 		return 0, nil
 	}
 
-	cutoff := time.Now().UTC().Add(-interval)
+	cutoff := time.Now().UTC().Add(-interval).Unix()
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, fmt.Errorf(`store: unable to start archive transaction: %v`, err)
+	}
+	defer tx.Rollback()
 
 	// Step 1 – select candidates
 	selectQuery := `
@@ -392,11 +408,11 @@ func (s *Storage) ArchiveEntries(status string, interval time.Duration, limit in
 			status=?1 AND
 			starred IS 0 AND
 			share_code='' AND
-			created_at < ?2
+			CAST(strftime('%s', created_at) AS INTEGER) < ?2
 		ORDER BY created_at ASC
 		LIMIT ?3
 	`
-	rows, err := s.db.Query(selectQuery, status, cutoff, limit)
+	rows, err := tx.Query(selectQuery, status, cutoff, limit)
 	if err != nil {
 		return 0, fmt.Errorf(`store: unable to select %s entries to archive: %v`, status, err)
 	}
@@ -428,7 +444,7 @@ func (s *Storage) ArchiveEntries(status string, interval time.Duration, limit in
 	// Step 2 – delete by primary key
 	ph, idArgs := inClauseInt64(1, entryIDs)
 	deleteQuery := `DELETE FROM entries WHERE id IN (` + ph + `)`
-	result, err := s.db.Exec(deleteQuery, idArgs...)
+	result, err := tx.Exec(deleteQuery, idArgs...)
 	if err != nil {
 		return 0, fmt.Errorf(`store: unable to delete %s entries: %v`, status, err)
 	}
@@ -436,7 +452,11 @@ func (s *Storage) ArchiveEntries(status string, interval time.Duration, limit in
 
 	// Step 3 – insert tombstones (idempotent, entry_tombstones has a unique PK)
 	for _, ts := range tombstones {
-		s.db.Exec(`INSERT OR IGNORE INTO entry_tombstones (feed_id, hash) VALUES (?1, ?2)`, ts.feedID, ts.hash)
+		tx.Exec(`INSERT OR IGNORE INTO entry_tombstones (feed_id, hash) VALUES (?1, ?2)`, ts.feedID, ts.hash)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf(`store: unable to commit archive transaction: %v`, err)
 	}
 
 	return count, nil
@@ -539,14 +559,25 @@ func (s *Storage) ToggleStarred(userID int64, entryID int64) error {
 //
 // The original PostgreSQL implementation used a data-modifying CTE
 // (WITH deleted AS (DELETE ... RETURNING ...) INSERT ...) which SQLite
-// does not support.  We split it into SELECT → DELETE → INSERT.
+// does not support.  We split it into SELECT → DELETE → INSERT wrapped in
+// a single transaction so the split is de-facto atomic under SQLite's
+// single-writer model.
+//
+// VACUUM is delegated to the scheduled cleanup task (runCleanupTasks) so
+// that frequent manual flushes do not trigger expensive full-db rebuilds.
 func (s *Storage) FlushHistory(userID int64) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf(`store: unable to start flush transaction: %v`, err)
+	}
+	defer tx.Rollback()
+
 	// Step 1 – select feed_id, hash of entries to delete
 	selectQuery := `
 		SELECT feed_id, hash FROM entries
 		WHERE user_id=?1 AND status=?2 AND starred IS 0 AND share_code=''
 	`
-	rows, err := s.db.Query(selectQuery, userID, model.EntryStatusRead)
+	rows, err := tx.Query(selectQuery, userID, model.EntryStatusRead)
 	if err != nil {
 		return fmt.Errorf(`store: unable to select entries for flush: %v`, err)
 	}
@@ -570,19 +601,17 @@ func (s *Storage) FlushHistory(userID int64) error {
 
 	// Step 2 – delete
 	deleteQuery := `DELETE FROM entries WHERE user_id=?1 AND status=?2 AND starred IS 0 AND share_code=''`
-	if _, err := s.db.Exec(deleteQuery, userID, model.EntryStatusRead); err != nil {
+	if _, err := tx.Exec(deleteQuery, userID, model.EntryStatusRead); err != nil {
 		return fmt.Errorf(`store: unable to flush history: %v`, err)
 	}
 
 	// Step 3 – insert tombstones
 	for _, ts := range tombstones {
-		s.db.Exec(`INSERT OR IGNORE INTO entry_tombstones (feed_id, hash) VALUES (?1, ?2)`, ts.feedID, ts.hash)
+		tx.Exec(`INSERT OR IGNORE INTO entry_tombstones (feed_id, hash) VALUES (?1, ?2)`, ts.feedID, ts.hash)
 	}
 
-	// Step 4 – reclaim disk space freed by the mass deletion
-	if _, err := s.db.Exec(`VACUUM`); err != nil {
-		slog.Error("Unable to vacuum database after flush", slog.Any("error", err))
-		return nil
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf(`store: unable to commit flush transaction: %v`, err)
 	}
 
 	return nil
@@ -606,6 +635,8 @@ func (s *Storage) MarkAllAsRead(userID int64) error {
 }
 
 // MarkAllAsReadBeforeDate updates all user entries to the read status before the given date.
+// Uses CAST(strftime('%s', ...) AS INTEGER) so the comparison works correctly
+// regardless of whether published_at was stored as RFC3339 or time.Time.String().
 func (s *Storage) MarkAllAsReadBeforeDate(userID int64, before time.Time) error {
 	query := `
 		UPDATE
@@ -614,9 +645,9 @@ func (s *Storage) MarkAllAsReadBeforeDate(userID int64, before time.Time) error 
 			status=?1,
 			changed_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')
 		WHERE
-			user_id=?2 AND status=?3 AND published_at < ?4
+			user_id=?2 AND status=?3 AND CAST(strftime('%s', published_at) AS INTEGER) < ?4
 	`
-	result, err := s.db.Exec(query, model.EntryStatusRead, userID, model.EntryStatusUnread, before)
+	result, err := s.db.Exec(query, model.EntryStatusRead, userID, model.EntryStatusUnread, before.UTC().Unix())
 	if err != nil {
 		return fmt.Errorf(`store: unable to mark all entries as read before %s: %v`, before.Format(time.RFC3339), err)
 	}
@@ -664,10 +695,8 @@ func (s *Storage) MarkGloballyVisibleFeedsAsRead(userID int64) error {
 }
 
 // MarkFeedAsRead updates all feed entries to the read status.
-// NOTE: The original PG version filtered with AND published_at < $5 to avoid
-// marking entries newer than the last feed check.  SQLite stores timestamps as
-// TEXT and string-comparison across timezones (e.g. +0800 vs UTC) is
-// unreliable, so the filter is dropped.
+// Uses CAST(strftime('%s', ...) AS INTEGER) for time comparison so the
+// semantics are independent of the TEXT storage format.
 func (s *Storage) MarkFeedAsRead(userID, feedID int64, before time.Time) error {
 	query := `
 		UPDATE
@@ -676,9 +705,16 @@ func (s *Storage) MarkFeedAsRead(userID, feedID int64, before time.Time) error {
 			status=?1,
 			changed_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')
 		WHERE
-			user_id=?2 AND feed_id=?3 AND status=?4
+			user_id=?2 AND feed_id=?3 AND status=?4 AND CAST(strftime('%s', published_at) AS INTEGER) < ?5
 	`
-	result, err := s.db.Exec(query, model.EntryStatusRead, userID, feedID, model.EntryStatusUnread)
+	result, err := s.db.Exec(
+		query,
+		model.EntryStatusRead,
+		userID,
+		feedID,
+		model.EntryStatusUnread,
+		before.UTC().Unix(),
+	)
 	if err != nil {
 		return fmt.Errorf(`store: unable to mark feed entries as read: %v`, err)
 	}
@@ -710,11 +746,11 @@ func (s *Storage) MarkCategoryAsRead(userID, categoryID int64, before time.Time)
 		AND
 			status=?3
 		AND
-			published_at < ?4
+			CAST(strftime('%s', published_at) AS INTEGER) < ?4
 		AND
 			feeds.category_id=?5
 	`
-	result, err := s.db.Exec(query, model.EntryStatusRead, userID, model.EntryStatusUnread, before, categoryID)
+	result, err := s.db.Exec(query, model.EntryStatusRead, userID, model.EntryStatusUnread, before.UTC().Unix(), categoryID)
 	if err != nil {
 		return fmt.Errorf(`store: unable to mark category entries as read: %v`, err)
 	}

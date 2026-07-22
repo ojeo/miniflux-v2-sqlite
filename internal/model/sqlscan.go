@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -138,6 +139,14 @@ type Time struct {
 	Time time.Time
 }
 
+// cachedLayout protects the cached layout index.  Almost all timestamps in the
+// database use RFC3339, so trying the last-successful layout first makes the
+// common case a single time.Parse call instead of walking 8 layouts.
+var (
+	cachedLayoutMu sync.Mutex
+	cachedLayout   int
+)
+
 // Scan implements sql.Scanner.
 func (t *Time) Scan(src any) error {
 	switch v := src.(type) {
@@ -162,9 +171,26 @@ func (t *Time) Scan(src any) error {
 		v = doubleTZOffset.ReplaceAllStringFunc(v, func(s string) string {
 			return s[:6] // " +0800 +0800" → " +0800"
 		})
-		for _, layout := range timeScanLayouts {
+
+		// Try the last-successful layout first.  Under normal operation
+		// almost every timestamp is RFC3339, so this avoids iterating.
+		cachedLayoutMu.Lock()
+		cached := cachedLayout
+		cachedLayoutMu.Unlock()
+		if parsed, err := time.Parse(timeScanLayouts[cached], v); err == nil {
+			t.Time = parsed
+			return nil
+		}
+
+		for i, layout := range timeScanLayouts {
+			if i == cached {
+				continue // already tried
+			}
 			if parsed, err := time.Parse(layout, v); err == nil {
 				t.Time = parsed
+				cachedLayoutMu.Lock()
+				cachedLayout = i
+				cachedLayoutMu.Unlock()
 				return nil
 			}
 		}

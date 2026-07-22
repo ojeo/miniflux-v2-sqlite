@@ -231,12 +231,12 @@ func (s *Storage) RemoveUserWebSession(userID int64, sessionID string) error {
 
 // CleanOldWebSessions removes web sessions older than the specified interval (24h minimum).
 func (s *Storage) CleanOldWebSessions(interval time.Duration) (int64, error) {
-	cutoff := time.Now().UTC().Add(-interval)
+	cutoff := time.Now().UTC().Add(-interval).Unix()
 	query := `
 		DELETE FROM
 			web_sessions
 		WHERE
-			created_at < ?1
+			CAST(strftime('%s', created_at) AS INTEGER) < ?1
 	`
 
 	result, err := s.db.Exec(query, cutoff)

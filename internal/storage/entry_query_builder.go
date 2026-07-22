@@ -30,6 +30,7 @@ type EntryQueryBuilder struct {
 	offset          int
 	fetchEnclosures bool
 	excludeContent  bool
+	searchActive    bool
 }
 
 // WithEnclosures fetches enclosures for each entry.
@@ -48,15 +49,19 @@ func (e *EntryQueryBuilder) WithoutContent() *EntryQueryBuilder {
 
 // WithSearchQuery adds a full-text search query to the condition.
 //
-// PostgreSQL's tsvector/websearch_to_tsquery is replaced by SQLite FTS5: we
-// match against the entries_fts external-content virtual table. Relevance
-// ranking (ts_rank) is dropped as a deliberate downgrade; results are ordered
-// by the caller's regular sort expression (usually published_at).
+// PostgreSQL's tsvector/websearch_to_tsquery is replaced by SQLite FTS5.
+// Results are ordered by bm25(entries_fts) relevance rank first, then by
+// the caller's regular sort expression.
 func (e *EntryQueryBuilder) WithSearchQuery(query string) *EntryQueryBuilder {
 	if query != "" {
 		nArgs := len(e.args) + 1
 		e.conditions = append(e.conditions, fmt.Sprintf("e.id IN (SELECT rowid FROM entries_fts WHERE entries_fts MATCH ?%d)", nArgs))
 		e.args = append(e.args, query)
+
+		// Prepend bm25 ranking as the primary sort expression for
+		// relevance-ordered search results (replaces PostgreSQL ts_rank).
+		e.sortExpressions = append([]string{"bm25(entries_fts)"}, e.sortExpressions...)
+		e.searchActive = true
 	}
 	return e
 }
@@ -73,29 +78,37 @@ func (e *EntryQueryBuilder) WithStarred(starred bool) *EntryQueryBuilder {
 
 // BeforeChangedDate adds a condition < changed_at
 func (e *EntryQueryBuilder) BeforeChangedDate(date time.Time) *EntryQueryBuilder {
-	e.conditions = append(e.conditions, "e.changed_at < ?"+strconv.Itoa(len(e.args)+1))
-	e.args = append(e.args, date)
+	n := len(e.args) + 1
+	e.conditions = append(e.conditions, fmt.Sprintf("CAST(strftime('%%s', e.changed_at) AS INTEGER) < ?%d", n))
+	e.args = append(e.args, date.UTC().Unix())
 	return e
 }
 
 // AfterChangedDate adds a condition > changed_at
 func (e *EntryQueryBuilder) AfterChangedDate(date time.Time) *EntryQueryBuilder {
-	e.conditions = append(e.conditions, "e.changed_at > ?"+strconv.Itoa(len(e.args)+1))
-	e.args = append(e.args, date)
+	n := len(e.args) + 1
+	e.conditions = append(e.conditions, fmt.Sprintf("CAST(strftime('%%s', e.changed_at) AS INTEGER) > ?%d", n))
+	e.args = append(e.args, date.UTC().Unix())
 	return e
 }
 
-// BeforePublishedDate adds a condition < published_at
+// BeforePublishedDate adds a condition < published_at.
+// Uses CAST(strftime('%s', ...) AS INTEGER) so the comparison works
+// correctly regardless of the TEXT storage format.
 func (e *EntryQueryBuilder) BeforePublishedDate(date time.Time) *EntryQueryBuilder {
-	e.conditions = append(e.conditions, "e.published_at < ?"+strconv.Itoa(len(e.args)+1))
-	e.args = append(e.args, date)
+	n := len(e.args) + 1
+	e.conditions = append(e.conditions, fmt.Sprintf("CAST(strftime('%%s', e.published_at) AS INTEGER) < ?%d", n))
+	e.args = append(e.args, date.UTC().Unix())
 	return e
 }
 
-// AfterPublishedDate adds a condition > published_at
+// AfterPublishedDate adds a condition > published_at.
+// Uses CAST(strftime('%s', ...) AS INTEGER) so the comparison works
+// correctly regardless of the TEXT storage format.
 func (e *EntryQueryBuilder) AfterPublishedDate(date time.Time) *EntryQueryBuilder {
-	e.conditions = append(e.conditions, "e.published_at > ?"+strconv.Itoa(len(e.args)+1))
-	e.args = append(e.args, date)
+	n := len(e.args) + 1
+	e.conditions = append(e.conditions, fmt.Sprintf("CAST(strftime('%%s', e.published_at) AS INTEGER) > ?%d", n))
+	e.args = append(e.args, date.UTC().Unix())
 	return e
 }
 
@@ -312,6 +325,12 @@ func (e *EntryQueryBuilder) fetchEntries(withCount bool) (model.Entries, int, er
 		countColumn = "count(*) OVER(),"
 	}
 
+	ftsJoin := ""
+	if e.searchActive {
+		ftsJoin = `
+		INNER JOIN entries_fts ON entries_fts.rowid = e.id`
+	}
+
 	query := `
 		SELECT
 			` + countColumn + `
@@ -354,7 +373,7 @@ func (e *EntryQueryBuilder) fetchEntries(withCount bool) (model.Entries, int, er
 			i.external_id AS icon_external_id,
 			u.timezone
 		FROM
-			entries e
+			entries e` + ftsJoin + `
 		INNER JOIN
 			feeds f ON f.id=e.feed_id
 		INNER JOIN
