@@ -76,39 +76,43 @@ func (e *EntryQueryBuilder) WithStarred(starred bool) *EntryQueryBuilder {
 	return e
 }
 
-// BeforeChangedDate adds a condition < changed_at
+// BeforeChangedDate adds a condition < changed_at.
+//
+// Time columns are stored as RFC3339 UTC TEXT (e.g., "2024-01-15T10:30:00Z").
+// This format has the property that lexicographical order == chronological order,
+// so direct string comparison is correct and can leverage B-tree indexes.
 func (e *EntryQueryBuilder) BeforeChangedDate(date time.Time) *EntryQueryBuilder {
 	n := len(e.args) + 1
-	e.conditions = append(e.conditions, fmt.Sprintf("CAST(strftime('%%s', e.changed_at) AS INTEGER) < ?%d", n))
-	e.args = append(e.args, date.UTC().Unix())
+	e.conditions = append(e.conditions, fmt.Sprintf("e.changed_at < ?%d", n))
+	e.args = append(e.args, date.UTC().Format(time.RFC3339))
 	return e
 }
 
-// AfterChangedDate adds a condition > changed_at
+// AfterChangedDate adds a condition > changed_at.
 func (e *EntryQueryBuilder) AfterChangedDate(date time.Time) *EntryQueryBuilder {
 	n := len(e.args) + 1
-	e.conditions = append(e.conditions, fmt.Sprintf("CAST(strftime('%%s', e.changed_at) AS INTEGER) > ?%d", n))
-	e.args = append(e.args, date.UTC().Unix())
+	e.conditions = append(e.conditions, fmt.Sprintf("e.changed_at > ?%d", n))
+	e.args = append(e.args, date.UTC().Format(time.RFC3339))
 	return e
 }
 
 // BeforePublishedDate adds a condition < published_at.
-// Uses CAST(strftime('%s', ...) AS INTEGER) so the comparison works
-// correctly regardless of the TEXT storage format.
+//
+// Time columns are stored as RFC3339 UTC TEXT (e.g., "2024-01-15T10:30:00Z").
+// This format has the property that lexicographical order == chronological order,
+// so direct string comparison is correct and can leverage B-tree indexes.
 func (e *EntryQueryBuilder) BeforePublishedDate(date time.Time) *EntryQueryBuilder {
 	n := len(e.args) + 1
-	e.conditions = append(e.conditions, fmt.Sprintf("CAST(strftime('%%s', e.published_at) AS INTEGER) < ?%d", n))
-	e.args = append(e.args, date.UTC().Unix())
+	e.conditions = append(e.conditions, fmt.Sprintf("e.published_at < ?%d", n))
+	e.args = append(e.args, date.UTC().Format(time.RFC3339))
 	return e
 }
 
 // AfterPublishedDate adds a condition > published_at.
-// Uses CAST(strftime('%s', ...) AS INTEGER) so the comparison works
-// correctly regardless of the TEXT storage format.
 func (e *EntryQueryBuilder) AfterPublishedDate(date time.Time) *EntryQueryBuilder {
 	n := len(e.args) + 1
-	e.conditions = append(e.conditions, fmt.Sprintf("CAST(strftime('%%s', e.published_at) AS INTEGER) > ?%d", n))
-	e.args = append(e.args, date.UTC().Unix())
+	e.conditions = append(e.conditions, fmt.Sprintf("e.published_at > ?%d", n))
+	e.args = append(e.args, date.UTC().Format(time.RFC3339))
 	return e
 }
 

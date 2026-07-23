@@ -92,9 +92,9 @@ func (s *Storage) createEntry(tx *sql.Tx, entry *model.Entry) error {
 	// concurrent archive committing between an earlier existence check and this statement
 	// cannot bring a deleted entry back as unread.
 	//
-	// published_at is stored as RFC3339 UTC TEXT.  Time comparisons use
-	// CAST(strftime('%s', published_at) AS INTEGER) so that both RFC3339
-	// and time.Time.String() formats produce the correct Unix timestamp.
+	// published_at is stored as RFC3339 UTC TEXT (e.g., "2024-01-15T10:30:00Z").
+	// This format has the property that lexicographical order == chronological order,
+	// so direct string comparison is correct and can leverage B-tree indexes.
 	query := `
 		INSERT INTO entries
 			(
@@ -392,7 +392,7 @@ func (s *Storage) ArchiveEntries(status string, interval time.Duration, limit in
 		return 0, nil
 	}
 
-	cutoff := time.Now().UTC().Add(-interval).Unix()
+	cutoff := time.Now().UTC().Add(-interval)
 
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -401,6 +401,10 @@ func (s *Storage) ArchiveEntries(status string, interval time.Duration, limit in
 	defer tx.Rollback()
 
 	// Step 1 – select candidates
+	//
+	// Time columns are stored as RFC3339 UTC TEXT (e.g., "2024-01-15T10:30:00Z").
+	// This format has the property that lexicographical order == chronological order,
+	// so direct string comparison is correct and can leverage B-tree indexes.
 	selectQuery := `
 		SELECT id, feed_id, hash
 		FROM entries
@@ -408,11 +412,11 @@ func (s *Storage) ArchiveEntries(status string, interval time.Duration, limit in
 			status=?1 AND
 			starred IS 0 AND
 			share_code='' AND
-			CAST(strftime('%s', created_at) AS INTEGER) < ?2
+			created_at < ?2
 		ORDER BY created_at ASC
 		LIMIT ?3
 	`
-	rows, err := tx.Query(selectQuery, status, cutoff, limit)
+	rows, err := tx.Query(selectQuery, status, cutoff.Format(time.RFC3339), limit)
 	if err != nil {
 		return 0, fmt.Errorf(`store: unable to select %s entries to archive: %v`, status, err)
 	}
@@ -635,8 +639,10 @@ func (s *Storage) MarkAllAsRead(userID int64) error {
 }
 
 // MarkAllAsReadBeforeDate updates all user entries to the read status before the given date.
-// Uses CAST(strftime('%s', ...) AS INTEGER) so the comparison works correctly
-// regardless of whether published_at was stored as RFC3339 or time.Time.String().
+//
+// Time columns are stored as RFC3339 UTC TEXT (e.g., "2024-01-15T10:30:00Z").
+// This format has the property that lexicographical order == chronological order,
+// so direct string comparison is correct and can leverage B-tree indexes.
 func (s *Storage) MarkAllAsReadBeforeDate(userID int64, before time.Time) error {
 	query := `
 		UPDATE
@@ -645,9 +651,9 @@ func (s *Storage) MarkAllAsReadBeforeDate(userID int64, before time.Time) error 
 			status=?1,
 			changed_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')
 		WHERE
-			user_id=?2 AND status=?3 AND CAST(strftime('%s', published_at) AS INTEGER) < ?4
+			user_id=?2 AND status=?3 AND published_at < ?4
 	`
-	result, err := s.db.Exec(query, model.EntryStatusRead, userID, model.EntryStatusUnread, before.UTC().Unix())
+	result, err := s.db.Exec(query, model.EntryStatusRead, userID, model.EntryStatusUnread, before.UTC().Format(time.RFC3339))
 	if err != nil {
 		return fmt.Errorf(`store: unable to mark all entries as read before %s: %v`, before.Format(time.RFC3339), err)
 	}
@@ -695,8 +701,10 @@ func (s *Storage) MarkGloballyVisibleFeedsAsRead(userID int64) error {
 }
 
 // MarkFeedAsRead updates all feed entries to the read status.
-// Uses CAST(strftime('%s', ...) AS INTEGER) for time comparison so the
-// semantics are independent of the TEXT storage format.
+//
+// Time columns are stored as RFC3339 UTC TEXT (e.g., "2024-01-15T10:30:00Z").
+// This format has the property that lexicographical order == chronological order,
+// so direct string comparison is correct and can leverage B-tree indexes.
 func (s *Storage) MarkFeedAsRead(userID, feedID int64, before time.Time) error {
 	query := `
 		UPDATE
@@ -705,7 +713,7 @@ func (s *Storage) MarkFeedAsRead(userID, feedID int64, before time.Time) error {
 			status=?1,
 			changed_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')
 		WHERE
-			user_id=?2 AND feed_id=?3 AND status=?4 AND CAST(strftime('%s', published_at) AS INTEGER) < ?5
+			user_id=?2 AND feed_id=?3 AND status=?4 AND published_at < ?5
 	`
 	result, err := s.db.Exec(
 		query,
@@ -713,7 +721,7 @@ func (s *Storage) MarkFeedAsRead(userID, feedID int64, before time.Time) error {
 		userID,
 		feedID,
 		model.EntryStatusUnread,
-		before.UTC().Unix(),
+		before.UTC().Format(time.RFC3339),
 	)
 	if err != nil {
 		return fmt.Errorf(`store: unable to mark feed entries as read: %v`, err)
@@ -730,6 +738,11 @@ func (s *Storage) MarkFeedAsRead(userID, feedID int64, before time.Time) error {
 }
 
 // MarkCategoryAsRead updates all category entries to the read status.
+// MarkCategoryAsRead updates all category entries to the read status.
+//
+// Time columns are stored as RFC3339 UTC TEXT (e.g., "2024-01-15T10:30:00Z").
+// This format has the property that lexicographical order == chronological order,
+// so direct string comparison is correct and can leverage B-tree indexes.
 func (s *Storage) MarkCategoryAsRead(userID, categoryID int64, before time.Time) error {
 	query := `
 		UPDATE
@@ -746,11 +759,11 @@ func (s *Storage) MarkCategoryAsRead(userID, categoryID int64, before time.Time)
 		AND
 			status=?3
 		AND
-			CAST(strftime('%s', published_at) AS INTEGER) < ?4
+			published_at < ?4
 		AND
 			feeds.category_id=?5
 	`
-	result, err := s.db.Exec(query, model.EntryStatusRead, userID, model.EntryStatusUnread, before.UTC().Unix(), categoryID)
+	result, err := s.db.Exec(query, model.EntryStatusRead, userID, model.EntryStatusUnread, before.UTC().Format(time.RFC3339), categoryID)
 	if err != nil {
 		return fmt.Errorf(`store: unable to mark category entries as read: %v`, err)
 	}

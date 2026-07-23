@@ -230,16 +230,20 @@ func (s *Storage) RemoveUserWebSession(userID int64, sessionID string) error {
 }
 
 // CleanOldWebSessions removes web sessions older than the specified interval (24h minimum).
+//
+// Time columns are stored as RFC3339 UTC TEXT (e.g., "2024-01-15T10:30:00Z").
+// This format has the property that lexicographical order == chronological order,
+// so direct string comparison is correct and can leverage B-tree indexes.
 func (s *Storage) CleanOldWebSessions(interval time.Duration) (int64, error) {
-	cutoff := time.Now().UTC().Add(-interval).Unix()
+	cutoff := time.Now().UTC().Add(-interval)
 	query := `
 		DELETE FROM
 			web_sessions
 		WHERE
-			CAST(strftime('%s', created_at) AS INTEGER) < ?1
+			created_at < ?1
 	`
 
-	result, err := s.db.Exec(query, cutoff)
+	result, err := s.db.Exec(query, cutoff.Format(time.RFC3339))
 	if err != nil {
 		return 0, fmt.Errorf(`store: unable to clean old web sessions: %v`, err)
 	}
