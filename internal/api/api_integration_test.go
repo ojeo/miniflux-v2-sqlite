@@ -2074,6 +2074,74 @@ func TestGetFeedIconWithInexistingFeedID(t *testing.T) {
 	}
 }
 
+func TestGetIconWithInexistingIconID(t *testing.T) {
+	t.Parallel()
+
+	testConfig := newIntegrationTestConfig()
+	if !testConfig.isConfigured() {
+		t.Skip(skipIntegrationTestsMessage)
+	}
+
+	client := miniflux.NewClient(testConfig.testBaseURL, testConfig.testAdminUsername, testConfig.testAdminPassword)
+	_, err := client.Icon(123456789)
+	if !errors.Is(err, miniflux.ErrNotFound) {
+		t.Fatalf(`Fetching an inexisting icon should return a "not found" error, got %v`, err)
+	}
+}
+
+func TestGetIconByIconIDFromAnotherUser(t *testing.T) {
+	t.Parallel()
+
+	testConfig := newIntegrationTestConfig()
+	if !testConfig.isConfigured() {
+		t.Skip(skipIntegrationTestsMessage)
+	}
+
+	adminClient := miniflux.NewClient(testConfig.testBaseURL, testConfig.testAdminUsername, testConfig.testAdminPassword)
+
+	// The owner subscribes to a feed, which fetches and stores its icon.
+	ownerUser, err := adminClient.CreateUser(testConfig.genRandomUsername(), testConfig.testRegularPassword, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer adminClient.DeleteUser(ownerUser.ID)
+
+	ownerClient := miniflux.NewClient(testConfig.testBaseURL, ownerUser.Username, testConfig.testRegularPassword)
+
+	feedID, err := ownerClient.CreateFeed(&miniflux.FeedCreationRequest{
+		FeedURL: testConfig.testFeedURL,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ownerIcon, err := ownerClient.FeedIcon(feedID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ownerIcon == nil {
+		t.Fatalf(`Invalid icon, got nil`)
+	}
+
+	// The owner can fetch its own icon by icon ID.
+	if _, err := ownerClient.Icon(ownerIcon.ID); err != nil {
+		t.Fatalf(`The owner should be able to fetch its own icon, got %v`, err)
+	}
+
+	// Another user without access to that feed must not be able to fetch the icon.
+	otherUser, err := adminClient.CreateUser(testConfig.genRandomUsername(), testConfig.testRegularPassword, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer adminClient.DeleteUser(otherUser.ID)
+
+	otherClient := miniflux.NewClient(testConfig.testBaseURL, otherUser.Username, testConfig.testRegularPassword)
+
+	if _, err := otherClient.Icon(ownerIcon.ID); !errors.Is(err, miniflux.ErrNotFound) {
+		t.Fatalf(`Fetching an icon owned by another user should return a "not found" error, got %v`, err)
+	}
+}
+
 func TestGetFeedsEndpoint(t *testing.T) {
 	t.Parallel()
 
@@ -2447,6 +2515,23 @@ func TestGetAllEntriesEndpointWithFilter(t *testing.T) {
 
 	if feedEntries.Entries[0].Title == "" {
 		t.Fatalf(`Invalid title, got empty`)
+	}
+
+	emptyPage, err := regularUserClient.Entries(&miniflux.Filter{
+		FeedID: feedID,
+		Limit:  1,
+		Offset: feedEntries.Total,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(emptyPage.Entries) != 0 {
+		t.Fatalf(`Expected no entries beyond the final page, got %d`, len(emptyPage.Entries))
+	}
+
+	if emptyPage.Total != feedEntries.Total {
+		t.Fatalf(`Expected total %d beyond the final page, got %d`, feedEntries.Total, emptyPage.Total)
 	}
 
 	recentEntries, err := regularUserClient.Entries(&miniflux.Filter{Order: "published_at", Direction: "desc"})
