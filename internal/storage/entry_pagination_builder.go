@@ -142,40 +142,93 @@ func (e *entryPaginationBuilder) Entries() (*model.Entry, *model.Entry, error) {
 	return prevEntry, nextEntry, nil
 }
 
+// getPrevNextID finds the previous and next entry IDs using key-based
+// pagination instead of lag()/lead() window functions.
+//
+// The original implementation used a CTE with lag()/lead() OVER (ORDER BY
+// ...) which forced SQLite to materialise the entire result set of all
+// matching entries (e.g. 12 k+ read entries) in a temporary B-tree before
+// looking up the single row of interest.
+//
+// The key-based approach:
+//  1. Fetches the current entry's sort-key values (the order column,
+//     created_at, id) with a single indexed lookup.
+//  2. Runs two independent LIMIT 1 queries — one for the predecessor
+//     and one for the successor — that use the composite
+//     user_id + status + order index to seek directly to the correct
+//     neighbourhood without scanning the full table.
 func (e *entryPaginationBuilder) getPrevNextID(tx *sql.Tx) (prevID int64, nextID int64, err error) {
-	cte := `
-		WITH entry_pagination AS (
-			SELECT
-				e.id,
-				lag(e.id) over (order by e.%[1]s asc, e.created_at asc, e.id desc) as prev_id,
-				lead(e.id) over (order by e.%[1]s asc, e.created_at asc, e.id desc) as next_id
-			FROM entries AS e
-			JOIN feeds AS f ON f.id=e.feed_id
-			JOIN categories c ON c.id = f.category_id
-			WHERE %[2]s
-			ORDER BY e.%[1]s asc, e.created_at asc, e.id desc
-		)
-		SELECT prev_id, next_id FROM entry_pagination AS ep WHERE %[3]s;
-	`
+	// Step 1 – retrieve the sort-key values of the current entry.
+	var orderVal, createdAt string
+	var curID int64
+	keyQuery := fmt.Sprintf(`SELECT e.%s, e.created_at, e.id FROM entries e WHERE e.id = ?1`, e.order)
+	if err := tx.QueryRow(keyQuery, e.entryID).Scan(&orderVal, &createdAt, &curID); err != nil {
+		return 0, 0, fmt.Errorf("entry pagination: unable to get sort keys for entry %d: %v", e.entryID, err)
+	}
 
 	subCondition := strings.Join(e.conditions, " AND ")
-	finalCondition := "ep.id = ?" + strconv.Itoa(len(e.args)+1)
-	query := fmt.Sprintf(cte, e.order, subCondition, finalCondition)
-	e.args = append(e.args, e.entryID)
 
-	var pID, nID sql.NullInt64
-	err = tx.QueryRow(query, e.args...).Scan(&pID, &nID)
-	switch {
-	case errors.Is(err, sql.ErrNoRows):
-		return 0, 0, nil
-	case err != nil:
-		return 0, 0, fmt.Errorf("entry pagination: %v", err)
+	// Step 2 – predecessor: the closest entry whose sort key is strictly
+	// smaller than the current entry's (in the ORDER BY used by the old
+	// CTE: e.{order} ASC, e.created_at ASC, e.id DESC).
+	//
+	// The three OR branches express the lexicographic comparison:
+	//   (a < A) OR (a = A AND b < B) OR (a = A AND b = B AND c (> for prev) C)
+	prevSQL := fmt.Sprintf(`
+		SELECT e.id FROM entries AS e
+		JOIN feeds AS f ON f.id = e.feed_id
+		JOIN categories c ON c.id = f.category_id
+		WHERE %s AND (
+			e.%s < ?%d
+			OR (e.%s = ?%d AND e.created_at < ?%d)
+			OR (e.%s = ?%d AND e.created_at = ?%d AND e.id > ?%d)
+		)
+		ORDER BY e.%s DESC, e.created_at DESC, e.id ASC
+		LIMIT 1`,
+		subCondition,
+		e.order, len(e.args)+1,
+		e.order, len(e.args)+2, len(e.args)+3,
+		e.order, len(e.args)+4, len(e.args)+5, len(e.args)+6,
+		e.order)
+
+	prevArgs := append(e.args,
+		orderVal,
+		orderVal, createdAt,
+		orderVal, createdAt, curID,
+	)
+
+	var pID sql.NullInt64
+	if err := tx.QueryRow(prevSQL, prevArgs...).Scan(&pID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return 0, 0, fmt.Errorf("entry pagination: prev query: %v", err)
+	}
+
+	// Step 3 – successor: the closest entry whose sort key is strictly
+	// greater than the current entry's.
+	nextSQL := fmt.Sprintf(`
+		SELECT e.id FROM entries AS e
+		JOIN feeds AS f ON f.id = e.feed_id
+		JOIN categories c ON c.id = f.category_id
+		WHERE %s AND (
+			e.%s > ?%d
+			OR (e.%s = ?%d AND e.created_at > ?%d)
+			OR (e.%s = ?%d AND e.created_at = ?%d AND e.id < ?%d)
+		)
+		ORDER BY e.%s ASC, e.created_at ASC, e.id DESC
+		LIMIT 1`,
+		subCondition,
+		e.order, len(e.args)+1,
+		e.order, len(e.args)+2, len(e.args)+3,
+		e.order, len(e.args)+4, len(e.args)+5, len(e.args)+6,
+		e.order)
+
+	var nID sql.NullInt64
+	if err := tx.QueryRow(nextSQL, prevArgs...).Scan(&nID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return 0, 0, fmt.Errorf("entry pagination: next query: %v", err)
 	}
 
 	if pID.Valid {
 		prevID = pID.Int64
 	}
-
 	if nID.Valid {
 		nextID = nID.Int64
 	}

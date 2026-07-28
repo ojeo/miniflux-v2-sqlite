@@ -309,38 +309,35 @@ func (e *EntryQueryBuilder) GetEntry() (*model.Entry, error) {
 
 // GetEntries returns a list of entries that match the condition.
 func (e *EntryQueryBuilder) GetEntries() (model.Entries, error) {
-	entries, _, err := e.fetchEntries(false)
-	return entries, err
+	return e.fetchEntries()
 }
 
 // GetEntriesWithCount returns a list of entries and the total count of matching
-// rows, ignoring limit and offset. It uses a window function for non-empty pages
-// and falls back to a separate count when the requested offset returns no rows.
+// rows, ignoring limit and offset.
+//
+// The count and the data are fetched in two separate queries.  This is
+// intentionally done instead of a single count(*) OVER() window-function
+// query because the window function forces SQLite to materialise the full
+// result set before sorting and applying LIMIT, rendering the ORDER BY index
+// useless.  The separate COUNT query can use a covering index (≈1 ms for
+// tens of thousands of rows), while the data query can use the sort index
+// naturally and stop after the first 100 rows.
 func (e *EntryQueryBuilder) GetEntriesWithCount() (model.Entries, int, error) {
-	entries, total, err := e.fetchEntries(true)
+	total, err := e.CountEntries()
 	if err != nil {
 		return nil, 0, err
 	}
 
-	if len(entries) == 0 && e.offset > 0 {
-		total, err = e.CountEntries()
-		if err != nil {
-			return nil, 0, err
-		}
+	entries, err := e.GetEntries()
+	if err != nil {
+		return nil, 0, err
 	}
 
 	return entries, total, nil
 }
 
-// fetchEntries is the shared implementation for GetEntries and GetEntriesWithCount.
-// When withCount is true, count(*) OVER() is included in the SELECT and the total
-// count of matching rows is returned; otherwise the returned count is 0.
-func (e *EntryQueryBuilder) fetchEntries(withCount bool) (model.Entries, int, error) {
-	countColumn := ""
-	if withCount {
-		countColumn = "count(*) OVER(),"
-	}
-
+// fetchEntries is the shared implementation for GetEntries.
+func (e *EntryQueryBuilder) fetchEntries() (model.Entries, error) {
 	ftsJoin := ""
 	if e.searchActive {
 		ftsJoin = `
@@ -349,7 +346,6 @@ func (e *EntryQueryBuilder) fetchEntries(withCount bool) (model.Entries, int, er
 
 	query := `
 		SELECT
-			` + countColumn + `
 			e.id,
 			e.user_id,
 			e.feed_id,
@@ -404,7 +400,7 @@ func (e *EntryQueryBuilder) fetchEntries(withCount bool) (model.Entries, int, er
 
 	rows, err := e.store.db.Query(query, e.args...)
 	if err != nil {
-		return nil, 0, fmt.Errorf("store: unable to get entries: %v", err)
+		return nil, fmt.Errorf("store: unable to get entries: %v", err)
 	}
 	defer rows.Close()
 
@@ -412,7 +408,6 @@ func (e *EntryQueryBuilder) fetchEntries(withCount bool) (model.Entries, int, er
 	entries := make(model.Entries, 0, size)
 	entryMap := make(map[int64]*model.Entry, size)
 	entryIDs := make([]int64, 0, size)
-	var totalCount int
 
 	for rows.Next() {
 		var iconID sql.NullInt64
@@ -463,13 +458,9 @@ func (e *EntryQueryBuilder) fetchEntries(withCount bool) (model.Entries, int, er
 			&tz,
 		}
 
-		if withCount {
-			dest = append([]any{&totalCount}, dest...)
-		}
-
 		err := rows.Scan(dest...)
 		if err != nil {
-			return nil, 0, fmt.Errorf("store: unable to fetch entry row: %v", err)
+			return nil, fmt.Errorf("store: unable to fetch entry row: %v", err)
 		}
 
 		entry.Date = date.Time
@@ -504,7 +495,7 @@ func (e *EntryQueryBuilder) fetchEntries(withCount bool) (model.Entries, int, er
 	if e.fetchEnclosures && len(entryIDs) > 0 {
 		enclosures, err := e.store.EnclosuresByEntryIDs(entryIDs)
 		if err != nil {
-			return nil, 0, fmt.Errorf("store: unable to fetch enclosures: %w", err)
+			return nil, fmt.Errorf("store: unable to fetch enclosures: %w", err)
 		}
 
 		for entryID, entryEnclosures := range enclosures {
@@ -514,7 +505,7 @@ func (e *EntryQueryBuilder) fetchEntries(withCount bool) (model.Entries, int, er
 		}
 	}
 
-	return entries, totalCount, nil
+	return entries, nil
 }
 
 // GetEntryIDs returns a list of entry IDs that match the condition.
