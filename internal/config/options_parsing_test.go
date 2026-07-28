@@ -1265,6 +1265,32 @@ func TestCleanupRemoveSessionsIntervalOptionParsing(t *testing.T) {
 	}
 }
 
+func TestCleanupVacuumFreeListPercentOptionParsing(t *testing.T) {
+	configParser := NewConfigParser()
+
+	if configParser.options.CleanupVacuumFreeListPercent() != 0.1 {
+		t.Fatalf("Expected CLEANUP_VACUUM_FREELIST_PCT default to be 0.1 (10%%)")
+	}
+
+	if err := configParser.parseLines([]string{"CLEANUP_VACUUM_FREELIST_PCT=5"}); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if configParser.options.CleanupVacuumFreeListPercent() != 0.05 {
+		t.Fatalf("Expected CLEANUP_VACUUM_FREELIST_PCT=5 to produce ratio 0.05")
+	}
+
+	// 0 means always vacuum
+	if err := configParser.parseLines([]string{"CLEANUP_VACUUM_FREELIST_PCT=0"}); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Out-of-range should fail
+	if err := configParser.parseLines([]string{"CLEANUP_VACUUM_FREELIST_PCT=101"}); err == nil {
+		t.Fatalf("Expected error for CLEANUP_VACUUM_FREELIST_PCT=101")
+	}
+}
+
 func TestDatabaseConnectionLifetimeOptionParsing(t *testing.T) {
 	configParser := NewConfigParser()
 

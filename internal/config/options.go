@@ -149,12 +149,20 @@ func NewConfigOptions() *configOptions {
 					return validateGreaterOrEqualThan(rawValue, 1)
 				},
 			},
-			"CLEANUP_REMOVE_SESSIONS_DAYS": {
-				parsedDuration: time.Hour * 24 * 30,
-				rawValue:       "30",
-				valueType:      dayType,
+		"CLEANUP_REMOVE_SESSIONS_DAYS": {
+			parsedDuration: time.Hour * 24 * 30,
+			rawValue:       "30",
+			valueType:      dayType,
+		},
+		"CLEANUP_VACUUM_FREELIST_PCT": {
+			parsedIntValue: 10,
+			rawValue:       "10",
+			valueType:      intType,
+			validator: func(rawValue string) error {
+				return validateRange(rawValue, 0, 100)
 			},
-			"CREATE_ADMIN": {
+		},
+		"CREATE_ADMIN": {
 				parsedBoolValue: false,
 				rawValue:        "0",
 				valueType:       boolType,
@@ -678,6 +686,10 @@ func (c *configOptions) CleanupFrequency() time.Duration {
 
 func (c *configOptions) CleanupRemoveSessionsInterval() time.Duration {
 	return c.options["CLEANUP_REMOVE_SESSIONS_DAYS"].parsedDuration
+}
+
+func (c *configOptions) CleanupVacuumFreeListPercent() float64 {
+	return float64(c.options["CLEANUP_VACUUM_FREELIST_PCT"].parsedIntValue) / 100.0
 }
 
 func (c *configOptions) CreateAdmin() bool {
