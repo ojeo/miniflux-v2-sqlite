@@ -166,6 +166,7 @@ func Parse() {
 	defer db.Close()
 
 	store := storage.NewStorage(db)
+	defer store.Close()
 
 	if err := store.Ping(); err != nil {
 		printErrorAndExit(err)

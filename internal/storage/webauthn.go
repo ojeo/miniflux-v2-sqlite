@@ -59,7 +59,7 @@ func (s *Storage) WebAuthnCredentialByHandle(handle []byte) (int64, *model.WebAu
 			handle = ?1
 	`
 	var addedOn, lastSeenOn model.Time
-	err := s.db.
+	err := s.reader().
 		QueryRow(query, handle).
 		Scan(
 			&userID,
@@ -108,7 +108,7 @@ func (s *Storage) WebAuthnCredentialsByUserID(userID int64) ([]model.WebAuthnCre
 		WHERE
 			user_id = ?1
 	`
-	rows, err := s.db.Query(query, userID)
+	rows, err := s.reader().Query(query, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -188,7 +188,7 @@ func (s *Storage) WebAuthnUpdateName(userID int64, handle []byte, name string) (
 func (s *Storage) CountWebAuthnCredentialsByUserID(userID int64) int {
 	var count int
 	query := "SELECT COUNT(*) FROM webauthn_credentials WHERE user_id = ?1"
-	err := s.db.QueryRow(query, userID).Scan(&count)
+	err := s.reader().QueryRow(query, userID).Scan(&count)
 	if err != nil {
 		slog.Error("store: unable to count webauthn certs for user",
 			slog.Int64("user_id", userID),

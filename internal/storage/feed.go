@@ -39,7 +39,7 @@ func (l byStateAndName) Less(i, j int) bool {
 func (s *Storage) FeedExists(userID, feedID int64) (bool, error) {
 	var result bool
 	query := `SELECT 1 FROM feeds WHERE user_id=?1 AND id=?2 LIMIT 1`
-	if err := s.db.QueryRow(query, userID, feedID).Scan(&result); err != nil && !errors.Is(err, sql.ErrNoRows) {
+	if err := s.reader().QueryRow(query, userID, feedID).Scan(&result); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return false, fmt.Errorf(`store: unable to check if feed exists: %w`, err)
 	}
 	return result, nil
@@ -49,7 +49,7 @@ func (s *Storage) FeedExists(userID, feedID int64) (bool, error) {
 func (s *Storage) CheckedAt(userID, feedID int64) (time.Time, error) {
 	var checkedAt model.Time
 	query := `SELECT checked_at FROM feeds WHERE user_id=?1 AND id=?2 LIMIT 1`
-	err := s.db.QueryRow(query, userID, feedID).Scan(&checkedAt)
+	err := s.reader().QueryRow(query, userID, feedID).Scan(&checkedAt)
 	if err != nil {
 		return time.Now(), err
 	}
@@ -62,7 +62,7 @@ func (s *Storage) CheckedAt(userID, feedID int64) (time.Time, error) {
 func (s *Storage) CategoryFeedExists(userID, categoryID, feedID int64) (bool, error) {
 	var result bool
 	query := `SELECT 1 FROM feeds WHERE user_id=?1 AND category_id=?2 AND id=?3 LIMIT 1`
-	if err := s.db.QueryRow(query, userID, categoryID, feedID).Scan(&result); err != nil && !errors.Is(err, sql.ErrNoRows) {
+	if err := s.reader().QueryRow(query, userID, categoryID, feedID).Scan(&result); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return false, fmt.Errorf(`store: unable to check if feed exists in category: %w`, err)
 	}
 	return result, nil
@@ -72,7 +72,7 @@ func (s *Storage) CategoryFeedExists(userID, categoryID, feedID int64) (bool, er
 func (s *Storage) FeedURLExists(userID int64, feedURL string) bool {
 	var result int
 	query := `SELECT 1 FROM feeds WHERE user_id=?1 AND feed_url=?2 LIMIT 1`
-	s.db.QueryRow(query, userID, feedURL).Scan(&result)
+	s.reader().QueryRow(query, userID, feedURL).Scan(&result)
 	return result != 0
 }
 
@@ -80,13 +80,13 @@ func (s *Storage) FeedURLExists(userID int64, feedURL string) bool {
 func (s *Storage) AnotherFeedURLExists(userID, feedID int64, feedURL string) bool {
 	var result int
 	query := `SELECT 1 FROM feeds WHERE id <> ?1 AND user_id=?2 AND feed_url=?3 LIMIT 1`
-	s.db.QueryRow(query, feedID, userID, feedURL).Scan(&result)
+	s.reader().QueryRow(query, feedID, userID, feedURL).Scan(&result)
 	return result != 0
 }
 
 // CountAllFeeds returns the number of feeds keyed by enabled, disabled, and total.
 func (s *Storage) CountAllFeeds() (map[string]int64, error) {
-	rows, err := s.db.Query(`SELECT disabled, count(*) FROM feeds GROUP BY disabled`)
+	rows, err := s.reader().Query(`SELECT disabled, count(*) FROM feeds GROUP BY disabled`)
 	if err != nil {
 		return nil, fmt.Errorf("storage: unable to count feeds: %w", err)
 	}
@@ -125,7 +125,7 @@ func (s *Storage) CountAllFeedsWithErrors() (int, error) {
 	}
 	query := `SELECT count(*) FROM feeds WHERE parsing_error_count >= ?1`
 	var result int
-	err := s.db.QueryRow(query, pollingParsingErrorLimit).Scan(&result)
+	err := s.reader().QueryRow(query, pollingParsingErrorLimit).Scan(&result)
 	if err != nil {
 		return 0, fmt.Errorf("storage: unable to count feeds with errors: %w", err)
 	}
@@ -196,7 +196,7 @@ func (s *Storage) WeeklyFeedEntryCount(userID, feedID int64) (int, error) {
 	`
 
 	var weeklyCount int
-	err := s.db.QueryRow(query, userID, feedID).Scan(&weeklyCount)
+	err := s.reader().QueryRow(query, userID, feedID).Scan(&weeklyCount)
 
 	switch {
 	case errors.Is(err, sql.ErrNoRows):

@@ -279,7 +279,7 @@ func (e *EntryQueryBuilder) CountEntries() (count int, err error) {
 			JOIN categories c ON c.id = f.category_id
 		WHERE ` + e.buildCondition()
 
-	err = e.store.db.QueryRow(query, e.args...).Scan(&count)
+	err = e.store.reader().QueryRow(query, e.args...).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("store: unable to count entries: %v", err)
 	}
@@ -398,7 +398,7 @@ func (e *EntryQueryBuilder) fetchEntries() (model.Entries, error) {
 			users u ON u.id=e.user_id
 		WHERE ` + e.buildCondition() + " " + e.buildSorting()
 
-	rows, err := e.store.db.Query(query, e.args...)
+	rows, err := e.store.reader().Query(query, e.args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: unable to get entries: %v", err)
 	}
@@ -521,7 +521,7 @@ func (e *EntryQueryBuilder) GetEntryIDs() ([]int64, error) {
 			f.id=e.feed_id
 		WHERE ` + e.buildCondition() + " " + e.buildSorting()
 
-	rows, err := e.store.db.Query(query, e.args...)
+	rows, err := e.store.reader().Query(query, e.args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: unable to get entries: %v", err)
 	}

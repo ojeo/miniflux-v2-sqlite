@@ -191,6 +191,37 @@ func NewConfigOptions() *configOptions {
 					return validateGreaterOrEqualThan(rawValue, 0)
 				},
 			},
+			"SQLITE_READER_MAX_CONNS": {
+				parsedIntValue: 8,
+				rawValue:       "8",
+				valueType:      intType,
+				validator: func(rawValue string) error {
+					// 0 disables the read/write split (falls back to a single
+					// connection for reads); >= 1 enables the reader pool.
+					return validateGreaterOrEqualThan(rawValue, 0)
+				},
+			},
+			"SQLITE_WRITER_MAX_CONNS": {
+				parsedIntValue: 1,
+				rawValue:       "1",
+				valueType:      intType,
+				validator: func(rawValue string) error {
+					return validateGreaterOrEqualThan(rawValue, 1)
+				},
+			},
+			"SQLITE_WRITE_BATCH_SIZE": {
+				parsedIntValue: 200,
+				rawValue:       "200",
+				valueType:      intType,
+				validator: func(rawValue string) error {
+					return validateGreaterOrEqualThan(rawValue, 1)
+				},
+			},
+			"SQLITE_ASYNC_FTS": {
+				parsedBoolValue: false,
+				rawValue:        "0",
+				valueType:       boolType,
+			},
 			"DATABASE_URL": {
 				parsedStringValue: "miniflux.db",
 				rawValue:          "miniflux.db",
@@ -710,6 +741,31 @@ func (c *configOptions) DatabaseMinConns() int {
 
 func (c *configOptions) DatabaseURL() string {
 	return c.options["DATABASE_URL"].parsedStringValue
+}
+
+// SQLiteReaderMaxConns returns the number of connections in the dedicated
+// read-only reader pool. Only used by the SQLite backend (WAL multi-reader).
+func (c *configOptions) SQLiteReaderMaxConns() int {
+	return c.options["SQLITE_READER_MAX_CONNS"].parsedIntValue
+}
+
+// SQLiteWriterMaxConns returns the number of connections in the single-writer
+// pool. Only used by the SQLite backend (WAL single-writer model).
+func (c *configOptions) SQLiteWriterMaxConns() int {
+	return c.options["SQLITE_WRITER_MAX_CONNS"].parsedIntValue
+}
+
+// SQLiteWriteBatchSize returns the number of entries committed per write
+// transaction during a feed refresh. Only used by the SQLite backend.
+func (c *configOptions) SQLiteWriteBatchSize() int {
+	return c.options["SQLITE_WRITE_BATCH_SIZE"].parsedIntValue
+}
+
+// SQLiteAsyncFTS reports whether asynchronous FTS index maintenance is enabled.
+// It defaults to false (synchronous FTS triggers). Async FTS is an opt-in
+// experimental flag; see the storage layer for how it is consumed.
+func (c *configOptions) SQLiteAsyncFTS() bool {
+	return c.options["SQLITE_ASYNC_FTS"].parsedBoolValue
 }
 
 func (c *configOptions) DisableHSTS() bool {

@@ -30,7 +30,7 @@ type feedQueryBuilder struct {
 // NewFeedQueryBuilder returns a new FeedQueryBuilder.
 func (s *Storage) NewFeedQueryBuilder(userID int64) *feedQueryBuilder {
 	return &feedQueryBuilder{
-		db:                s.db,
+		db:                s.reader(),
 		args:              []any{userID},
 		conditions:        []string{"f.user_id = ?1"},
 		counterArgs:       []any{userID, model.EntryStatusRead, model.EntryStatusUnread},

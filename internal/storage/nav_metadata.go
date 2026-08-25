@@ -76,7 +76,7 @@ func (s *Storage) GetNavMetadata(userID int64) (NavMetadata, error) {
 	var countUnread, countErrorFeeds int
 	var hasSaveEntry bool
 
-	err := s.db.QueryRow(query, userID, config.Opts.PollingParsingErrorLimit()).Scan(
+	err := s.reader().QueryRow(query, userID, config.Opts.PollingParsingErrorLimit()).Scan(
 		&countUnread,
 		&hasSaveEntry,
 		&countErrorFeeds,

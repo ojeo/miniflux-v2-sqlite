@@ -16,7 +16,7 @@ import (
 func (s *Storage) HasDuplicateFeverUsername(userID int64, feverUsername string) bool {
 	query := `SELECT 1 FROM integrations WHERE user_id != ?1 AND fever_username=?2 LIMIT 1`
 	var result int
-	s.db.QueryRow(query, userID, feverUsername).Scan(&result)
+	s.reader().QueryRow(query, userID, feverUsername).Scan(&result)
 	return result == 1
 }
 
@@ -24,7 +24,7 @@ func (s *Storage) HasDuplicateFeverUsername(userID int64, feverUsername string) 
 func (s *Storage) HasDuplicateGoogleReaderUsername(userID int64, googleReaderUsername string) bool {
 	query := `SELECT 1 FROM integrations WHERE user_id != ?1 AND googlereader_username=?2 LIMIT 1`
 	var result int
-	s.db.QueryRow(query, userID, googleReaderUsername).Scan(&result)
+	s.reader().QueryRow(query, userID, googleReaderUsername).Scan(&result)
 	return result == 1
 }
 
@@ -42,7 +42,7 @@ func (s *Storage) UserByFeverToken(token string) (*model.User, error) {
 	`
 
 	var user model.User
-	err := s.db.QueryRow(query, token).Scan(&user.ID, &user.Username, &user.IsAdmin, &user.Timezone)
+	err := s.reader().QueryRow(query, token).Scan(&user.ID, &user.Username, &user.IsAdmin, &user.Timezone)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		return nil, nil
@@ -66,7 +66,7 @@ func (s *Storage) GoogleReaderUserCheckPassword(username, password string) error
 			integrations.googlereader_enabled = 1 AND integrations.googlereader_username=?1
 	`
 
-	err := s.db.QueryRow(query, username).Scan(&hash)
+	err := s.reader().QueryRow(query, username).Scan(&hash)
 	if errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf(`store: unable to find this user: %s`, username)
 	} else if err != nil {
@@ -96,7 +96,7 @@ func (s *Storage) GoogleReaderUserGetIntegration(username string) (*model.Integr
 			integrations.googlereader_enabled = 1 AND integrations.googlereader_username=?1
 	`
 
-	err := s.db.QueryRow(query, username).Scan(&integration.UserID, &integration.GoogleReaderEnabled, &integration.GoogleReaderUsername, &integration.GoogleReaderPassword)
+	err := s.reader().QueryRow(query, username).Scan(&integration.UserID, &integration.GoogleReaderEnabled, &integration.GoogleReaderUsername, &integration.GoogleReaderPassword)
 	if errors.Is(err, sql.ErrNoRows) {
 		return &integration, fmt.Errorf(`store: unable to find this user: %s`, username)
 	} else if err != nil {
@@ -238,7 +238,7 @@ func (s *Storage) Integration(userID int64) (*model.Integration, error) {
 			user_id=?1
 	`
 	var integration model.Integration
-	err := s.db.QueryRow(query, userID).Scan(
+	err := s.reader().QueryRow(query, userID).Scan(
 		&integration.UserID,
 		&integration.PinboardEnabled,
 		&integration.PinboardToken,
@@ -672,7 +672,7 @@ func (s *Storage) HasSaveEntry(userID int64) (result bool) {
 				archiveorg_enabled = 1
 			)
 	`
-	if err := s.db.QueryRow(query, userID).Scan(&result); err != nil {
+	if err := s.reader().QueryRow(query, userID).Scan(&result); err != nil {
 		result = false
 	}
 

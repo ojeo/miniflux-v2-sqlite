@@ -24,7 +24,7 @@ type batchBuilder struct {
 
 func (s *Storage) NewBatchBuilder() *batchBuilder {
 	return &batchBuilder{
-		db: s.db,
+		db: s.reader(),
 	}
 }
 

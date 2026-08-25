@@ -20,7 +20,7 @@ var dummyBcryptHash = []byte("$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68L
 // CountUsers returns the total number of users.
 func (s *Storage) CountUsers() (int, error) {
 	var result int
-	err := s.db.QueryRow(`SELECT count(*) FROM users`).Scan(&result)
+	err := s.reader().QueryRow(`SELECT count(*) FROM users`).Scan(&result)
 	if err != nil {
 		return 0, fmt.Errorf("storage: unable to count users: %w", err)
 	}
@@ -42,14 +42,14 @@ func (s *Storage) SetLastLogin(userID int64) error {
 // UserExists returns true if a user with the given username exists.
 func (s *Storage) UserExists(username string) bool {
 	var result int
-	s.db.QueryRow(`SELECT 1 FROM users WHERE username=LOWER(?1) LIMIT 1`, username).Scan(&result)
+	s.reader().QueryRow(`SELECT 1 FROM users WHERE username=LOWER(?1) LIMIT 1`, username).Scan(&result)
 	return result != 0
 }
 
 // AnotherUserExists returns true if a user other than userID has the given username.
 func (s *Storage) AnotherUserExists(userID int64, username string) bool {
 	var result int
-	s.db.QueryRow(`SELECT 1 FROM users WHERE id != ?1 AND username=LOWER(?2) LIMIT 1`, userID, username).Scan(&result)
+	s.reader().QueryRow(`SELECT 1 FROM users WHERE id != ?1 AND username=LOWER(?2) LIMIT 1`, userID, username).Scan(&result)
 	return result != 0
 }
 
@@ -332,7 +332,7 @@ func (s *Storage) UpdateUser(user *model.User) error {
 
 // UserLanguage returns the language of the given user, or "en_US" if the lookup fails.
 func (s *Storage) UserLanguage(userID int64) (language string) {
-	err := s.db.QueryRow(`SELECT language FROM users WHERE id = ?1`, userID).Scan(&language)
+	err := s.reader().QueryRow(`SELECT language FROM users WHERE id = ?1`, userID).Scan(&language)
 	if err != nil {
 		return "en_US"
 	}
@@ -473,7 +473,7 @@ func (s *Storage) UserByField(field, value string) (*model.User, error) {
 func (s *Storage) AnotherUserWithFieldExists(userID int64, field, value string) bool {
 	var result int
 	query := `SELECT 1 FROM users WHERE id <> ?1 AND ` + quoteIdent(field) + `=?2 LIMIT 1`
-	s.db.QueryRow(query, userID, value).Scan(&result)
+	s.reader().QueryRow(query, userID, value).Scan(&result)
 	return result != 0
 }
 
@@ -525,7 +525,7 @@ func (s *Storage) UserByAPIKey(token string) (*model.User, error) {
 func (s *Storage) fetchUser(query string, args ...any) (*model.User, error) {
 	var user model.User
 	var lastLoginAt model.Time
-	err := s.db.QueryRow(query, args...).Scan(
+	err := s.reader().QueryRow(query, args...).Scan(
 		&user.ID,
 		&user.Username,
 		&user.IsAdmin,
@@ -616,7 +616,7 @@ func (s *Storage) Users() (model.Users, error) {
 			users
 		ORDER BY username ASC
 	`
-	rows, err := s.db.Query(query)
+	rows, err := s.reader().Query(query)
 	if err != nil {
 		return nil, fmt.Errorf(`store: unable to fetch users: %v`, err)
 	}
@@ -676,7 +676,7 @@ func (s *Storage) CheckPassword(username, password string) error {
 	var hash string
 	username = strings.ToLower(username)
 
-	err := s.db.QueryRow("SELECT password FROM users WHERE username=?1", username).Scan(&hash)
+	err := s.reader().QueryRow("SELECT password FROM users WHERE username=?1", username).Scan(&hash)
 	if errors.Is(err, sql.ErrNoRows) {
 		// Perform a dummy bcrypt comparison against the hashed `password` string to avoid leaking whether the user exists via response timing.
 		_ = bcrypt.CompareHashAndPassword(dummyBcryptHash, []byte(password))
@@ -697,7 +697,7 @@ func (s *Storage) HasPassword(userID int64) (bool, error) {
 	var result int
 	query := `SELECT 1 FROM users WHERE id=?1 AND password <> '' LIMIT 1`
 
-	err := s.db.QueryRow(query, userID).Scan(&result)
+	err := s.reader().QueryRow(query, userID).Scan(&result)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	} else if err != nil {

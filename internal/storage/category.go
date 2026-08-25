@@ -15,7 +15,7 @@ import (
 func (s *Storage) AnotherCategoryExists(userID, categoryID int64, title string) bool {
 	var result int
 	query := `SELECT 1 FROM categories WHERE user_id=?1 AND id != ?2 AND lower(title)=lower(?3) LIMIT 1`
-	s.db.QueryRow(query, userID, categoryID, title).Scan(&result)
+	s.reader().QueryRow(query, userID, categoryID, title).Scan(&result)
 	return result != 0
 }
 
@@ -23,7 +23,7 @@ func (s *Storage) AnotherCategoryExists(userID, categoryID int64, title string) 
 func (s *Storage) CategoryTitleExists(userID int64, title string) bool {
 	var result int
 	query := `SELECT 1 FROM categories WHERE user_id=?1 AND lower(title)=lower(?2) LIMIT 1`
-	s.db.QueryRow(query, userID, title).Scan(&result)
+	s.reader().QueryRow(query, userID, title).Scan(&result)
 	return result != 0
 }
 
@@ -34,7 +34,7 @@ func (s *Storage) CategoryTitleExists(userID int64, title string) bool {
 func (s *Storage) CategoryIDExists(userID, categoryID int64) (bool, error) {
 	var result bool
 	query := `SELECT 1 FROM categories WHERE user_id=?1 AND id=?2 LIMIT 1`
-	if err := s.db.QueryRow(query, userID, categoryID).Scan(&result); err != nil && !errors.Is(err, sql.ErrNoRows) {
+	if err := s.reader().QueryRow(query, userID, categoryID).Scan(&result); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return false, fmt.Errorf(`store: unable to check if category exists: %w`, err)
 	}
 	return result, nil
@@ -45,7 +45,7 @@ func (s *Storage) Category(userID, categoryID int64) (*model.Category, error) {
 	var category model.Category
 
 	query := `SELECT id, user_id, title, hide_globally FROM categories WHERE user_id=?1 AND id=?2`
-	err := s.db.QueryRow(query, userID, categoryID).Scan(&category.ID, &category.UserID, &category.Title, &category.HideGlobally)
+	err := s.reader().QueryRow(query, userID, categoryID).Scan(&category.ID, &category.UserID, &category.Title, &category.HideGlobally)
 
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
@@ -62,7 +62,7 @@ func (s *Storage) FirstCategory(userID int64) (*model.Category, error) {
 	query := `SELECT id, user_id, title, hide_globally FROM categories WHERE user_id=?1 ORDER BY title ASC LIMIT 1`
 
 	var category model.Category
-	err := s.db.QueryRow(query, userID).Scan(&category.ID, &category.UserID, &category.Title, &category.HideGlobally)
+	err := s.reader().QueryRow(query, userID).Scan(&category.ID, &category.UserID, &category.Title, &category.HideGlobally)
 
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
@@ -79,7 +79,7 @@ func (s *Storage) CategoryByTitle(userID int64, title string) (*model.Category, 
 	var category model.Category
 
 	query := `SELECT id, user_id, title, hide_globally FROM categories WHERE user_id=?1 AND title=?2`
-	err := s.db.QueryRow(query, userID, title).Scan(&category.ID, &category.UserID, &category.Title, &category.HideGlobally)
+	err := s.reader().QueryRow(query, userID, title).Scan(&category.ID, &category.UserID, &category.Title, &category.HideGlobally)
 
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
@@ -94,7 +94,7 @@ func (s *Storage) CategoryByTitle(userID int64, title string) (*model.Category, 
 // Categories returns all categories that belongs to the given user.
 func (s *Storage) Categories(userID int64) (model.Categories, error) {
 	query := `SELECT id, user_id, title, hide_globally FROM categories WHERE user_id=?1 ORDER BY title ASC`
-	rows, err := s.db.Query(query, userID)
+	rows, err := s.reader().Query(query, userID)
 	if err != nil {
 		return nil, fmt.Errorf(`store: unable to fetch categories: %v`, err)
 	}
@@ -154,7 +154,7 @@ func (s *Storage) CategoriesWithFeedCount(userID int64, sortOrder string) (model
 		`
 	}
 
-	rows, err := s.db.Query(query, model.EntryStatusUnread, userID)
+	rows, err := s.reader().Query(query, model.EntryStatusUnread, userID)
 	if err != nil {
 		return nil, fmt.Errorf(`store: unable to fetch categories: %v`, err)
 	}

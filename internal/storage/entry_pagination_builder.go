@@ -257,7 +257,7 @@ func (e *entryPaginationBuilder) getEntry(tx *sql.Tx, entryID int64) (*model.Ent
 // NewEntryPaginationBuilder returns a new EntryPaginationBuilder.
 func (s *Storage) NewEntryPaginationBuilder(userID, entryID int64, order, direction string) *entryPaginationBuilder {
 	return &entryPaginationBuilder{
-		db:         s.db,
+		db:         s.reader(),
 		args:       []any{userID},
 		conditions: []string{"e.user_id = ?1"},
 		entryID:    entryID,

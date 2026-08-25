@@ -17,7 +17,7 @@ import (
 func (s *Storage) HasFeedIcon(feedID int64) bool {
 	var result int
 	query := `SELECT 1 FROM feed_icons WHERE feed_id=?1 LIMIT 1`
-	s.db.QueryRow(query, feedID).Scan(&result)
+	s.reader().QueryRow(query, feedID).Scan(&result)
 	return result == 1
 }
 
@@ -42,7 +42,7 @@ func (s *Storage) IconByUserAndIconID(userID, iconID int64) (*model.Icon, error)
 				WHERE f.user_id = ?1
 					AND fi.icon_id = ?2
 			)`
-	err := s.db.QueryRow(query, userID, iconID).Scan(&icon.ID, &icon.Hash, &icon.MimeType, &icon.Content, &icon.ExternalID)
+	err := s.reader().QueryRow(query, userID, iconID).Scan(&icon.ID, &icon.Hash, &icon.MimeType, &icon.Content, &icon.ExternalID)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		return nil, nil
@@ -66,7 +66,7 @@ func (s *Storage) IconByExternalID(externalIconID string) (*model.Icon, error) {
 		FROM icons
 		WHERE external_id=?1
 	`
-	err := s.db.QueryRow(query, externalIconID).Scan(&icon.ID, &icon.Hash, &icon.MimeType, &icon.Content, &icon.ExternalID)
+	err := s.reader().QueryRow(query, externalIconID).Scan(&icon.ID, &icon.Hash, &icon.MimeType, &icon.Content, &icon.ExternalID)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		return nil, nil
@@ -94,7 +94,7 @@ func (s *Storage) IconByFeedID(userID, feedID int64) (*model.Icon, error) {
 		LIMIT 1
 	`
 	var icon model.Icon
-	err := s.db.QueryRow(query, userID, feedID).Scan(&icon.ID, &icon.Hash, &icon.MimeType, &icon.Content, &icon.ExternalID)
+	err := s.reader().QueryRow(query, userID, feedID).Scan(&icon.ID, &icon.Hash, &icon.MimeType, &icon.Content, &icon.ExternalID)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		return nil, nil
@@ -189,7 +189,7 @@ func (s *Storage) Icons(userID int64) (model.Icons, error) {
 		WHERE
 			feeds.user_id=?1
 	`
-	rows, err := s.db.Query(query, userID)
+	rows, err := s.reader().Query(query, userID)
 	if err != nil {
 		return nil, fmt.Errorf(`store: unable to fetch icons: %v`, err)
 	}

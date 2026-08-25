@@ -30,7 +30,7 @@ func (s *Storage) EnclosuresByEntryID(entryID int64) (model.EnclosureList, error
 		ORDER BY id ASC
 	`
 
-	rows, err := s.db.Query(query, entryID)
+	rows, err := s.reader().Query(query, entryID)
 	if err != nil {
 		return nil, fmt.Errorf(`store: unable to fetch enclosures: %v`, err)
 	}
@@ -78,7 +78,7 @@ func (s *Storage) EnclosuresByEntryIDs(entryIDs []int64) (map[int64]model.Enclos
 		ORDER BY id ASC
 	`
 
-	rows, err := s.db.Query(query, args...)
+	rows, err := s.reader().Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: unable to fetch enclosures: %w", err)
 	}
@@ -123,7 +123,7 @@ func (s *Storage) EnclosureByID(userID, enclosureID int64) (*model.Enclosure, er
 			id = ?1 AND user_id = ?2
 	`
 
-	row := s.db.QueryRow(query, enclosureID, userID)
+	row := s.reader().QueryRow(query, enclosureID, userID)
 
 	var enclosure model.Enclosure
 	err := row.Scan(

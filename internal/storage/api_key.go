@@ -17,7 +17,7 @@ var ErrAPIKeyNotFound = errors.New("store: API Key not found")
 func (s *Storage) APIKeyExists(userID int64, description string) bool {
 	var result int
 	query := `SELECT 1 FROM api_keys WHERE user_id=?1 AND lower(description)=lower(?2) LIMIT 1`
-	s.db.QueryRow(query, userID, description).Scan(&result)
+	s.reader().QueryRow(query, userID, description).Scan(&result)
 	return result != 0
 }
 
@@ -43,7 +43,7 @@ func (s *Storage) APIKeys(userID int64) (model.APIKeys, error) {
 			user_id=?1
 		ORDER BY description ASC
 	`
-	rows, err := s.db.Query(query, userID)
+	rows, err := s.reader().Query(query, userID)
 	if err != nil {
 		return nil, fmt.Errorf(`store: unable to fetch API Keys: %v`, err)
 	}

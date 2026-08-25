@@ -71,7 +71,7 @@ func (s *Storage) WebSessionsByUserID(userID int64) ([]model.WebSession, error) 
 			created_at DESC
 	`
 
-	rows, err := s.db.Query(query, userID)
+	rows, err := s.reader().Query(query, userID)
 	if err != nil {
 		return nil, fmt.Errorf(`store: unable to fetch web sessions: %v`, err)
 	}
@@ -101,7 +101,7 @@ func (s *Storage) WebSessionByID(sessionID string) (*model.WebSession, error) {
 		return nil, nil
 	}
 
-	row := s.db.QueryRow(`
+	row := s.reader().QueryRow(`
 		SELECT
 			id,
 			secret_hash,
