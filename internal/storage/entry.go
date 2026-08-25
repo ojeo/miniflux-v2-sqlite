@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"miniflux.app/v2/internal/config"
 	"miniflux.app/v2/internal/crypto"
 	"miniflux.app/v2/internal/model"
 )
@@ -35,7 +36,7 @@ func inClauseInt64(start int, ids []int64) (string, []any) {
 
 // CountAllEntries returns the number of entries for each status in the database.
 func (s *Storage) CountAllEntries() (map[string]int64, error) {
-	rows, err := s.db.Query(`SELECT status, count(*) FROM entries GROUP BY status`)
+	rows, err := s.reader().Query(`SELECT status, count(*) FROM entries GROUP BY status`)
 	if err != nil {
 		return nil, fmt.Errorf("storage: unable to count entries: %w", err)
 	}
@@ -266,6 +267,10 @@ func (s *Storage) getEntryIDByHash(tx *sql.Tx, feedID int64, entryHash string) (
 // InsertEntryForFeed inserts a single entry into a feed, optionally updating if it already exists.
 // Returns true if a new entry was created, false if an existing one was reused.
 func (s *Storage) InsertEntryForFeed(userID, feedID int64, entry *model.Entry) (bool, error) {
+	// Serialise SQLite write transactions across concurrent RSS workers.
+	s.writerMu.Lock()
+	defer s.writerMu.Unlock()
+
 	entry.UserID = userID
 	entry.FeedID = feedID
 
@@ -309,7 +314,7 @@ func (s *Storage) IsNewEntry(feedID int64, entryHash string) bool {
 			)
 	`
 	var known bool
-	s.db.QueryRow(query, feedID, entryHash).Scan(&known)
+	s.reader().QueryRow(query, feedID, entryHash).Scan(&known)
 	return !known
 }
 
@@ -317,7 +322,7 @@ func (s *Storage) GetReadTime(feedID int64, entryHash string) int {
 	var result int
 
 	// Note: This query uses entries_feed_id_hash_key index
-	s.db.QueryRow(
+	s.reader().QueryRow(
 		`SELECT
 			reading_time
 		FROM
@@ -333,48 +338,108 @@ func (s *Storage) GetReadTime(feedID int64, entryHash string) int {
 }
 
 // RefreshFeedEntries updates feed entries while refreshing a feed.
+//
+// Instead of committing one transaction per entry (which floods the single
+// SQLite writer connection and forces readers to queue), entries are grouped
+// into batches and committed together.  Each batch is a single transaction, so
+// consistency is preserved (all-or-nothing per batch) and a failure rolls the
+// current batch back.  The batch size comes from SQLITE_WRITE_BATCH_SIZE
+// (default 200); a size of 1 reproduces the original per-entry behaviour.
+//
+// FTS index maintenance: the entries_fts table is updated synchronously by the
+// AFTER INSERT/UPDATE triggers. Batching already merges those FTS writes into
+// the same transaction as the entries, so they are written together (fewer,
+// larger FTS batches instead of one per entry).  Truly asynchronous FTS would
+// require dropping the triggers and maintaining an application-level indexing
+// queue, which trades search freshness for write throughput and adds crash
+// recovery complexity.  The SQLITE_ASYNC_FTS flag (default off) is the reserved
+// opt-in switch for that future work; it is intentionally not enabled here.
 func (s *Storage) RefreshFeedEntries(userID, feedID int64, entries model.Entries, updateExistingEntries bool) (newEntries model.Entries, err error) {
-	for _, entry := range entries {
+	// Serialise SQLite write transactions across concurrent RSS workers. This
+	// method contains only database writes (no HTTP fetching), so holding the
+	// lock for its whole body is safe and prevents readers from queueing
+	// behind a flood of per-entry transactions.
+	s.writerMu.Lock()
+	defer s.writerMu.Unlock()
+
+	batchSize := 200 // default; preserved when config.Opts is not initialised
+	if config.Opts != nil {
+		if v := config.Opts.SQLiteWriteBatchSize(); v > 0 {
+			batchSize = v
+		}
+	}
+
+	// beginTx starts (or reuses) a transaction for the current batch.
+	var tx *sql.Tx
+	beginBatch := func() error {
+		var beginErr error
+		tx, beginErr = s.db.Begin()
+		return beginErr
+	}
+	commitBatch := func() error {
+		if tx == nil {
+			return nil
+		}
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+		tx = nil
+		return nil
+	}
+	rollbackBatch := func() {
+		if tx != nil {
+			_ = tx.Rollback()
+			tx = nil
+		}
+	}
+
+	if err := beginBatch(); err != nil {
+		return nil, fmt.Errorf(`store: unable to start transaction: %v`, err)
+	}
+
+	for i, entry := range entries {
 		entry.UserID = userID
 		entry.FeedID = feedID
 
-		tx, err := s.db.Begin()
-		if err != nil {
-			return nil, fmt.Errorf(`store: unable to start transaction: %v`, err)
-		}
-
-		entryExists, err := s.entryExists(tx, entry)
-		if err != nil {
-			if rollbackErr := tx.Rollback(); rollbackErr != nil {
-				return nil, fmt.Errorf(`store: unable to rollback transaction: %v (rolled back due to: %v)`, rollbackErr, err)
-			}
-			return nil, err
+		entryExists, entryErr := s.entryExists(tx, entry)
+		if entryErr != nil {
+			rollbackBatch()
+			return nil, entryErr
 		}
 
 		if entryExists {
 			if updateExistingEntries {
-				err = s.updateEntry(tx, entry)
+				if entryErr = s.updateEntry(tx, entry); entryErr != nil {
+					rollbackBatch()
+					return nil, entryErr
+				}
 			}
 		} else {
-			err = s.createEntry(tx, entry)
+			entryErr = s.createEntry(tx, entry)
 			switch {
-			case errors.Is(err, ErrEntryTombstoned):
-				err = nil
-			case err == nil:
+			case errors.Is(entryErr, ErrEntryTombstoned):
+				entryErr = nil
+			case entryErr == nil:
 				newEntries = append(newEntries, entry)
+			case entryErr != nil:
+				rollbackBatch()
+				return nil, entryErr
 			}
 		}
 
-		if err != nil {
-			if rollbackErr := tx.Rollback(); rollbackErr != nil {
-				return nil, fmt.Errorf(`store: unable to rollback transaction: %v (rolled back due to: %v)`, rollbackErr, err)
+		// Commit at the end of each batch.
+		if batchSize > 0 && (i+1)%batchSize == 0 {
+			if err := commitBatch(); err != nil {
+				return nil, fmt.Errorf(`store: unable to commit transaction: %v`, err)
 			}
-			return nil, err
+			if err := beginBatch(); err != nil {
+				return nil, fmt.Errorf(`store: unable to start transaction: %v`, err)
+			}
 		}
+	}
 
-		if err := tx.Commit(); err != nil {
-			return nil, fmt.Errorf(`store: unable to commit transaction: %v`, err)
-		}
+	if err := commitBatch(); err != nil {
+		return nil, fmt.Errorf(`store: unable to commit transaction: %v`, err)
 	}
 
 	return newEntries, nil
