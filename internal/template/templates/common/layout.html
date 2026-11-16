@@ -93,9 +93,11 @@
                 <li {{ if eq .menu "categories" }}class="active"{{ end }} title="{{ t "tooltip.keyboard_shortcuts" "g c" }}">
                     <a href="{{ routePath "/categories" }}" data-page="categories">{{ icon "categories" }}{{ t "menu.categories" }}</a>
                 </li>
+                {{ if fullTextSearchEnabled }}
                 <li {{ if eq .menu "search" }}class="active"{{ end }} title="{{ t "tooltip.keyboard_shortcuts" "/" }}">
                     <a href="{{ routePath "/search" }}" data-page="search">{{ icon "search" }}{{ t "menu.search" }}</a>
                 </li>
+                {{ end }}
                 <li {{ if eq .menu "settings" }}class="active"{{ end }} title="{{ t "tooltip.keyboard_shortcuts" "g s" }}">
                     <a href="{{ routePath "/settings" }}" data-page="settings">{{ icon "settings" }}{{ t "menu.settings" }}</a>
                 </li>

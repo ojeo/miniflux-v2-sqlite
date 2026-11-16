@@ -39,18 +39,19 @@ func (f *funcMap) Map() template.FuncMap {
 		f.iconPaths[filename] = f.basePath + "/icon/" + bundle.Checksum + "/" + filename
 	}
 	return template.FuncMap{
-		"contains":         strings.Contains,
-		"csp":              csp,
-		"startsWith":       strings.HasPrefix,
-		"formatFileSize":   formatFileSize,
-		"dict":             dict,
-		"truncate":         truncate,
-		"isEmail":          isEmail,
-		"baseURL":          config.Opts.BaseURL,
-		"apiEnabled":       config.Opts.HasAPI,
-		"rootURL":          config.Opts.RootURL,
-		"disableLocalAuth": config.Opts.DisableLocalAuth,
-		"oidcProviderName": config.Opts.OAuth2OIDCProviderName,
+		"contains":              strings.Contains,
+		"csp":                   csp,
+		"startsWith":            strings.HasPrefix,
+		"formatFileSize":        formatFileSize,
+		"dict":                  dict,
+		"truncate":              truncate,
+		"isEmail":               isEmail,
+		"baseURL":               config.Opts.BaseURL,
+		"apiEnabled":            config.Opts.HasAPI,
+		"fullTextSearchEnabled": config.Opts.HasFullTextSearch,
+		"rootURL":               config.Opts.RootURL,
+		"disableLocalAuth":      config.Opts.DisableLocalAuth,
+		"oidcProviderName":      config.Opts.OAuth2OIDCProviderName,
 		"hasOAuth2Provider": func(provider string) bool {
 			return config.Opts.OAuth2Provider() == provider
 		},

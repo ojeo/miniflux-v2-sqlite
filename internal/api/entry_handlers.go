@@ -193,7 +193,11 @@ func (h *handler) findEntries(w http.ResponseWriter, r *http.Request, feedID int
 		}
 	}
 
-	builder = configureFilters(builder, r)
+	builder, err := configureFilters(builder, r)
+	if err != nil {
+		response.JSONBadRequest(w, r, err)
+		return
+	}
 
 	entries, count, err := builder.GetEntriesWithCount()
 	if err != nil {
@@ -576,7 +580,7 @@ func (h *handler) flushHistoryHandler(w http.ResponseWriter, r *http.Request) {
 	response.JSONAccepted(w, r)
 }
 
-func configureFilters(builder *storage.EntryQueryBuilder, r *http.Request) *storage.EntryQueryBuilder {
+func configureFilters(builder *storage.EntryQueryBuilder, r *http.Request) (*storage.EntryQueryBuilder, error) {
 	if beforeEntryID := request.QueryInt64Param(r, "before_entry_id", 0); beforeEntryID > 0 {
 		builder = builder.BeforeEntryID(beforeEntryID)
 	}
@@ -617,10 +621,13 @@ func configureFilters(builder *storage.EntryQueryBuilder, r *http.Request) *stor
 	}
 
 	if searchQuery := request.QueryStringParam(r, "search", ""); searchQuery != "" {
+		if !config.Opts.HasFullTextSearch() {
+			return builder, errors.New("full-text search is disabled")
+		}
 		builder = builder.WithSearchQuery(searchQuery)
 	}
 
-	return builder
+	return builder, nil
 }
 
 func parseEntryIDsParams(r *http.Request) (limit, offset int) {

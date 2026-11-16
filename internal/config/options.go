@@ -239,6 +239,11 @@ func NewConfigOptions() *configOptions {
 				rawValue:        "0",
 				valueType:       boolType,
 			},
+			"DISABLE_FULL_TEXT_SEARCH": {
+				parsedBoolValue: false,
+				rawValue:        "0",
+				valueType:       boolType,
+			},
 			"DISABLE_HSTS": {
 				parsedBoolValue: false,
 				rawValue:        "0",
@@ -768,6 +773,13 @@ func (c *configOptions) SQLiteAsyncFTS() bool {
 	return c.options["SQLITE_ASYNC_FTS"].parsedBoolValue
 }
 
+// DisableFullTextSearch reports whether full-text search (SQLite FTS5) is
+// disabled. When disabled the FTS index is dropped at startup and the search
+// endpoints are no longer available.
+func (c *configOptions) DisableFullTextSearch() bool {
+	return c.options["DISABLE_FULL_TEXT_SEARCH"].parsedBoolValue
+}
+
 func (c *configOptions) DisableHSTS() bool {
 	return c.options["DISABLE_HSTS"].parsedBoolValue
 }
@@ -810,6 +822,11 @@ func (c *configOptions) HasHTTPClientProxiesConfigured() bool {
 
 func (c *configOptions) HasAPI() bool {
 	return !c.options["DISABLE_API"].parsedBoolValue
+}
+
+// HasFullTextSearch reports whether full-text search (SQLite FTS5) is enabled.
+func (c *configOptions) HasFullTextSearch() bool {
+	return !c.options["DISABLE_FULL_TEXT_SEARCH"].parsedBoolValue
 }
 
 func (c *configOptions) HasHTTPService() bool {

@@ -25,7 +25,9 @@ Official website: <https://miniflux.app>
 > - **Full-text search**: FTS5 external-content virtual table (`entries_fts`)
 >   with `unicode61` tokenizer, kept in sync via INSERT/UPDATE/DELETE triggers.
 >   Relevance ranking (`ts_rank`) is dropped; results are ordered by
->   `published_at`.
+>   `published_at`. Set `DISABLE_FULL_TEXT_SEARCH=1` to turn full-text search
+>   off: the FTS index is dropped at startup (reclaiming disk space) and the
+>   search endpoints become unavailable.
 > - **Data types**: `timestamptz` → TEXT (stored in Go's `time.Time.String()`
 >   format; read through a custom `model.Time` scanner), `bool` → INTEGER,
 >   `text[]` → JSON TEXT, `inet` → TEXT, `jsonb` → TEXT.
@@ -60,7 +62,7 @@ Features
 - Share individual articles publicly.
 - Fetches website icons (favicons).
 - Saves articles to third-party services.
-- Provides full-text search (powered by SQLite FTS5).
+- Provides full-text search (powered by SQLite FTS5, can be disabled with `DISABLE_FULL_TEXT_SEARCH=1`).
 - Available in 20 languages: Portuguese (Brazilian), Chinese (Simplified and Traditional), Dutch, English (US), Finnish, French, German, Greek, Hindi, Indonesian, Italian, Japanese, Polish, Romanian, Russian, Taiwanese POJ, Ukrainian, Spanish, and Turkish.
 
 ### Privacy and Security

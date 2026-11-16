@@ -444,6 +444,42 @@ func TestDisableHTTPServiceOptionParsing(t *testing.T) {
 	}
 }
 
+func TestDisableFullTextSearchOptionParsing(t *testing.T) {
+	configParser := NewConfigParser()
+
+	if configParser.options.DisableFullTextSearch() {
+		t.Fatal("Expected DISABLE_FULL_TEXT_SEARCH to be disabled by default")
+	}
+
+	if !configParser.options.HasFullTextSearch() {
+		t.Fatal("Expected HAS_FULL_TEXT_SEARCH to be enabled by default")
+	}
+
+	if err := configParser.parseLines([]string{"DISABLE_FULL_TEXT_SEARCH=1"}); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if !configParser.options.DisableFullTextSearch() {
+		t.Fatal("Expected DISABLE_FULL_TEXT_SEARCH to be enabled")
+	}
+
+	if configParser.options.HasFullTextSearch() {
+		t.Fatal("Expected HAS_FULL_TEXT_SEARCH to be disabled")
+	}
+
+	if err := configParser.parseLines([]string{"DISABLE_FULL_TEXT_SEARCH=0"}); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if configParser.options.DisableFullTextSearch() {
+		t.Fatal("Expected DISABLE_FULL_TEXT_SEARCH to be disabled")
+	}
+
+	if !configParser.options.HasFullTextSearch() {
+		t.Fatal("Expected HAS_FULL_TEXT_SEARCH to be enabled")
+	}
+}
+
 func TestDisableLocalAuthOptionParsing(t *testing.T) {
 	configParser := NewConfigParser()
 

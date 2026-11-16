@@ -224,6 +224,12 @@ func Parse() {
 		printErrorAndExit(err)
 	}
 
+	// Keep the FTS index in sync with the DISABLE_FULL_TEXT_SEARCH setting:
+	// drop it when search is disabled, (re)create it when search is enabled.
+	if err := store.ReconcileFullTextSearchIndex(); err != nil {
+		printErrorAndExit(err)
+	}
+
 	if config.Opts.CreateAdmin() {
 		createAdminUserFromEnvironmentVariables(store)
 	}

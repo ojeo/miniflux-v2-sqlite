@@ -22,7 +22,9 @@ Miniflux 是一个极简且立场鲜明的 RSS 阅读器。
 >   一步创建完成。
 > - **全文搜索**：FTS5 外部内容虚拟表（`entries_fts`），使用 `unicode61`
 >   分词器，通过 INSERT/UPDATE/DELETE 触发器保持同步。取消了相关度排序
->   （`ts_rank`），结果按 `published_at` 排序。
+>   （`ts_rank`），结果按 `published_at` 排序。设置
+>   `DISABLE_FULL_TEXT_SEARCH=1` 可关闭全文搜索：启动时会删除 FTS 索引
+>   （回收磁盘空间），搜索相关接口将不可用。
 > - **数据类型**：`timestamptz` → TEXT（以 Go `time.Time.String()` 格式存储；
 >   通过自定义 `model.Time` scanner 读取），`bool` → INTEGER，
 >   `text[]` → JSON TEXT，`inet` → TEXT，`jsonb` → TEXT。
@@ -54,7 +56,7 @@ Miniflux 是一个极简且立场鲜明的 RSS 阅读器。
 - 公开分享单篇文章。
 - 获取网站图标（favicon）。
 - 将文章保存到第三方服务。
-- 提供全文搜索（基于 SQLite FTS5）。
+- 提供全文搜索（基于 SQLite FTS5，可通过 `DISABLE_FULL_TEXT_SEARCH=1` 关闭）。
 - 支持 20 种语言：葡萄牙语（巴西）、中文（简体和繁体）、荷兰语、英语（美国）、芬兰语、法语、德语、希腊语、印地语、印尼语、意大利语、日语、波兰语、罗马尼亚语、俄语、台湾白话字、乌克兰语、西班牙语和土耳其语。
 
 ### 隐私与安全

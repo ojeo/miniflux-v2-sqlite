@@ -6,6 +6,7 @@ package ui // import "miniflux.app/v2/internal/ui"
 import (
 	"net/http"
 
+	"miniflux.app/v2/internal/config"
 	"miniflux.app/v2/internal/http/request"
 	"miniflux.app/v2/internal/http/response"
 	"miniflux.app/v2/internal/model"
@@ -13,6 +14,11 @@ import (
 )
 
 func (h *handler) showSearchPage(w http.ResponseWriter, r *http.Request) {
+	if !config.Opts.HasFullTextSearch() {
+		response.HTMLNotFound(w, r)
+		return
+	}
+
 	user, err := h.store.UserByID(request.UserID(r))
 	if err != nil {
 		response.HTMLServerError(w, r, err)
