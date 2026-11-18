@@ -1,0 +1,2 @@
+3bff24e85a67a46464c1cfb6f7cced495f5f17210792caf2d21f3cc1b896968b  miniflux-2.3.3-sqlite-image-linux-amd64.tar
+7a3a2f38805c178180591644aa20a7ce7945aa74f35ca61c4212308359d24cfa  miniflux-2.3.3-sqlite-linux-amd64
