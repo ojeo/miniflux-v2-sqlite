@@ -229,21 +229,41 @@ func (s *Storage) RemoveUserWebSession(userID int64, sessionID string) error {
 	return nil
 }
 
-// CleanOldWebSessions removes web sessions older than the specified interval (24h minimum).
+// RemoveUserWebSessionsExcept removes all web sessions of the given user except
+// the one identified by keepSessionID. An empty keepSessionID removes them all.
+func (s *Storage) RemoveUserWebSessionsExcept(userID int64, keepSessionID string) error {
+	if _, err := s.db.Exec(`DELETE FROM web_sessions WHERE user_id=?1 AND id<>?2`, userID, keepSessionID); err != nil {
+		return fmt.Errorf(`store: unable to remove web sessions: %v`, err)
+	}
+
+	return nil
+}
+
+// anonymousWebSessionLifetime is how long a web session that never signed in
+// is kept. These are created for every visitor of the login page, including
+// crawlers and scanners that never send the cookie back.
+const anonymousWebSessionLifetime = 24 * time.Hour
+
+// CleanOldWebSessions removes web sessions older than the specified interval (24h minimum),
+// and anonymous web sessions older than anonymousWebSessionLifetime.
 //
 // Time columns are stored as RFC3339 UTC TEXT (e.g., "2024-01-15T10:30:00Z").
 // This format has the property that lexicographical order == chronological order,
 // so direct string comparison is correct and can leverage B-tree indexes.
 func (s *Storage) CleanOldWebSessions(interval time.Duration) (int64, error) {
-	cutoff := time.Now().UTC().Add(-interval)
 	query := `
 		DELETE FROM
 			web_sessions
 		WHERE
-			created_at < ?1
+			created_at < ?1 OR
+			(user_id IS NULL AND created_at < ?2)
 	`
 
-	result, err := s.db.Exec(query, cutoff.Format(time.RFC3339))
+	days := max(int(interval/(24*time.Hour)), 1)
+	cutoff := time.Now().UTC().Add(-time.Duration(days) * 24 * time.Hour)
+	anonymousCutoff := time.Now().UTC().Add(-anonymousWebSessionLifetime)
+
+	result, err := s.db.Exec(query, cutoff.Format(time.RFC3339), anonymousCutoff.Format(time.RFC3339))
 	if err != nil {
 		return 0, fmt.Errorf(`store: unable to clean old web sessions: %v`, err)
 	}

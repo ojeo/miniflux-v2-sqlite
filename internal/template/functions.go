@@ -51,6 +51,7 @@ func (f *funcMap) Map() template.FuncMap {
 		"fullTextSearchEnabled": config.Opts.HasFullTextSearch,
 		"rootURL":               config.Opts.RootURL,
 		"disableLocalAuth":      config.Opts.DisableLocalAuth,
+		"webAuthnEnabled":       config.Opts.WebAuthn,
 		"oidcProviderName":      config.Opts.OAuth2OIDCProviderName,
 		"hasOAuth2Provider": func(provider string) bool {
 			return config.Opts.OAuth2Provider() == provider

@@ -13,8 +13,10 @@ import (
 	"miniflux.app/v2/internal/config"
 	"miniflux.app/v2/internal/http/request"
 	"miniflux.app/v2/internal/http/response"
+	"miniflux.app/v2/internal/locale"
 	"miniflux.app/v2/internal/model"
 	feedHandler "miniflux.app/v2/internal/reader/handler"
+	"miniflux.app/v2/internal/storage"
 	"miniflux.app/v2/internal/validator"
 )
 
@@ -31,7 +33,15 @@ func (h *handler) createFeedHandler(w http.ResponseWriter, r *http.Request) {
 	if feedCreationRequest.CategoryID == 0 {
 		category, err := h.store.FirstCategory(userID)
 		if err != nil {
+			if errors.Is(err, storage.ErrNoCategory) {
+				response.JSONBadRequest(w, r, locale.NewLocalizedError("error.feed_category_not_found").Error())
+				return
+			}
 			response.JSONServerError(w, r, err)
+			return
+		}
+		if category == nil {
+			response.JSONBadRequest(w, r, locale.NewLocalizedError("error.feed_category_not_found").Error())
 			return
 		}
 		feedCreationRequest.CategoryID = category.ID
@@ -69,7 +79,10 @@ func (h *handler) refreshFeedHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	localizedError := feedHandler.RefreshFeed(h.store, userID, feedID, false)
+	// force=true mirrors the web UI's forced refresh: it bypasses the HTTP cache
+	// and reprocesses (and re-scrapes) entries that are already stored.
+	forceRefresh := request.QueryBoolParam(r, "force", false)
+	localizedError := feedHandler.RefreshFeed(h.store, userID, feedID, forceRefresh)
 	if localizedError != nil {
 		response.JSONServerError(w, r, localizedError.Error())
 		return

@@ -8,110 +8,11 @@
 {{ end }}
 
 {{ define "content"}}
-{{ if and (not disableLocalAuth) (hasOAuth2Provider "google") }}
-<fieldset>
-    <legend>{{ t "form.prefs.fieldset.google_authentication" }}</legend>
-    {{ if .user.GoogleID }}
-    <form method="post" action="{{ routePath "/oauth2/%s/unlink" "google" }}">
-        <input type="hidden" name="csrf" value="{{ .csrf }}">
-        <button type="submit" class="button button-danger" data-label-loading="{{ t "form.submit.saving" }}">{{ t "page.settings.unlink_google_account" }}</button>
-    </form>
-    {{ else }}
-    <p>
-        <a href="{{ routePath "/oauth2/%s/redirect" "google" }}">{{ t "page.settings.link_google_account" }}</a>
-    </p>
-    {{ end }}
-</fieldset>
-{{ else if and (not disableLocalAuth) (hasOAuth2Provider "oidc") }}
-<fieldset>
-    <legend>{{ t "form.prefs.fieldset.oidc_authentication" oidcProviderName }}</legend>
-    {{ if .user.OpenIDConnectID }}
-    <form method="post" action="{{ routePath "/oauth2/%s/unlink" "oidc" }}">
-        <input type="hidden" name="csrf" value="{{ .csrf }}">
-        <button type="submit" class="button button-danger" data-label-loading="{{ t "form.submit.saving" }}">{{ t "page.settings.unlink_oidc_account" oidcProviderName }}</button>
-    </form>
-    {{ else }}
-    <p>
-        <a href="{{ routePath "/oauth2/%s/redirect" "oidc" }}">{{ t "page.settings.link_oidc_account" oidcProviderName }}</a>
-    </p>
-    {{ end }}
-</fieldset>
-{{ end }}
-{{ if .webAuthnEnabled }}
-<fieldset>
-    <legend>{{ t "page.settings.webauthn.passkeys" }}</legend>
-
-    <template id="webauthn-error">
-        <div role="alert" class="alert alert-error" id="webauthn-error-alert">
-            <h4>{{ t "page.settings.webauthn.register.error" }}</h4>
-            <p id="webauthn-error-message"></p>
-        </div>
-    </template>
-
-    {{ if .webAuthnCerts}}
-    <table>
-        <tr>
-            <th>{{ t "page.settings.webauthn.passkey_name" }}</th>
-            <th>{{ t "page.settings.webauthn.added_on" }}</th>
-            <th>{{ t "page.settings.webauthn.last_seen_on" }}</th>
-            <th>{{ t "page.settings.webauthn.actions" }}</th>
-        </tr>
-        {{ range .webAuthnCerts }}
-        <tr>
-            <td>{{ .Name }}</td>
-            <td>{{ elapsed $.user.Timezone .AddedOn }}</td>
-            <td>{{ elapsed $.user.Timezone .LastSeenOn }}</td>
-            <td>
-                <a href="#"
-                    data-confirm="true"
-                    data-label-question="{{ t "confirm.question" }}"
-                    data-label-yes="{{ t "confirm.yes" }}"
-                    data-label-no="{{ t "confirm.no" }}"
-                    data-label-loading="{{ t "confirm.loading" }}"
-                    data-url="{{ routePath "/webauthn/%s/delete" .HandleEncoded }}">{{ icon "delete" }}{{ t "action.remove" }}</a>
-                <a href="{{ routePath "/webauthn/%s/rename" .HandleEncoded }}">{{ icon "edit" }} {{ t "action.edit" }}</a>
-            </td>
-        </tr>
-        {{ end }}
-    </table>
-    {{ end }}
-
-    <div class="buttons">
-        <button type="button" class="button button-primary" id="webauthn-register" disabled>
-            {{ t "page.settings.webauthn.register" }}
-        </button>
-        {{ if gt .countWebAuthnCerts 0}}
-        <button type="button" class="button button-danger" id="webauthn-delete">
-            {{ plural "page.settings.webauthn.delete" .countWebAuthnCerts .countWebAuthnCerts }}
-        </button>
-        {{ end }}
-    </div>
-</fieldset>
-{{ end }}
 <form method="post" autocomplete="off" action="{{ routePath "/settings" }}">
     <input type="hidden" name="csrf" value="{{ .csrf }}">
 
     {{ if .errorMessage }}
         <div role="alert" class="alert alert-error">{{ .errorMessage }}</div>
-    {{ end }}
-
-    {{ if not disableLocalAuth }}
-    <fieldset>
-        <legend>{{ t "form.prefs.fieldset.authentication_settings" }}</legend>
-
-        <label for="form-username">{{ t "form.user.label.username" }}</label>
-        <input type="text" name="username" id="form-username" value="{{ .form.Username }}" autocomplete="username" required>
-
-        <label for="form-password">{{ t "form.user.label.password" }}</label>
-        <input type="password" name="password" id="form-password" value="{{ .form.Password }}" autocomplete="new-password">
-
-        <label for="form-confirmation">{{ t "form.user.label.confirmation" }}</label>
-        <input type="password" name="confirmation" id="form-confirmation" value="{{ .form.Confirmation }}" autocomplete="new-password">
-
-        <div class="buttons">
-            <button type="submit" class="button button-primary" data-label-loading="{{ t "form.submit.saving" }}">{{ t "action.update" }}</button>
-        </div>
-    </fieldset>
     {{ end }}
 
     <fieldset>
@@ -225,14 +126,14 @@
         <label><input type="checkbox" name="open_external_links_in_new_tab" value="1" {{ if .form.OpenExternalLinksInNewTab }}checked{{ end }}> {{ t "form.prefs.label.open_external_links_in_new_tab" }}</label>
 
         <label for="form-custom-css">{{t "form.prefs.label.custom_css" }}</label>
-        <textarea id="form-custom-css" name="custom_css" cols="40" rows="10" spellcheck="false">{{ .form.CustomCSS }}</textarea>
+        <textarea id="form-custom-css" name="custom_css" class="code-input" cols="40" rows="10" spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off">{{ .form.CustomCSS }}</textarea>
 
         <label for="form-external-font-hosts">{{t "form.prefs.label.external_font_hosts" }}</label>
-        <input type="text" id="form-external-font-hosts" name="external_font_hosts" spellcheck="false" value="{{ .form.ExternalFontHosts }}">
+        <input type="text" id="form-external-font-hosts" name="external_font_hosts" class="code-input" spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off" value="{{ .form.ExternalFontHosts }}">
         <div class="form-help">{{t "form.prefs.help.external_font_hosts" }}</div>
 
         <label for="form-custom-js">{{t "form.prefs.label.custom_js" }}</label>
-        <textarea id="form-custom-js" name="custom_js" cols="40" rows="10" spellcheck="false">{{ .form.CustomJS }}</textarea>
+        <textarea id="form-custom-js" name="custom_js" class="code-input" cols="40" rows="10" spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off">{{ .form.CustomJS }}</textarea>
 
         <div class="buttons">
             <button type="submit" class="button button-primary" data-label-loading="{{ t "form.submit.saving" }}">{{ t "action.update" }}</button>
@@ -250,7 +151,7 @@
                 {{ icon "external-link" }}
             </a>
         </div>
-        <textarea id="form-block-filter-rules" name="block_filter_entry_rules" cols="40" rows="10" spellcheck="false">{{ .form.BlockFilterEntryRules }}</textarea>
+        <textarea id="form-block-filter-rules" name="block_filter_entry_rules" class="code-input" cols="40" rows="10" spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off">{{ .form.BlockFilterEntryRules }}</textarea>
 
         <div class="form-label-row">
             <label for="form-keep-filter-rules">
@@ -261,7 +162,7 @@
                 {{ icon "external-link" }}
             </a>
         </div>
-        <textarea id="form-keep-filter-rules" name="keep_filter_entry_rules" cols="40" rows="10" spellcheck="false">{{ .form.KeepFilterEntryRules }}</textarea>
+        <textarea id="form-keep-filter-rules" name="keep_filter_entry_rules" class="code-input" cols="40" rows="10" spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off">{{ .form.KeepFilterEntryRules }}</textarea>
 
         <div class="buttons">
             <button type="submit" class="button button-primary" data-label-loading="{{ t "form.submit.saving" }}">{{ t "action.update" }}</button>

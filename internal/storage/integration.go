@@ -4,9 +4,12 @@
 package storage // import "miniflux.app/v2/internal/storage"
 
 import (
+	"crypto/sha256"
+	"crypto/subtle"
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 
 	"golang.org/x/crypto/bcrypt"
 	"miniflux.app/v2/internal/model"
@@ -29,28 +32,57 @@ func (s *Storage) HasDuplicateGoogleReaderUsername(userID int64, googleReaderUse
 }
 
 // UserByFeverToken returns a user by using the Fever API token.
+//
+// Upstream compares SHA-256 digests of the token in SQL to keep the
+// comparison time independent of how much of the token matches. SQLite has no
+// built-in sha256() function (PostgreSQL gets it from pgcrypto), so the token
+// is compared in Go with crypto/subtle instead: the query returns every
+// Fever-enabled token (at most one row per user) and the comparison is done
+// with a constant-time primitive.
 func (s *Storage) UserByFeverToken(token string) (*model.User, error) {
 	query := `
 		SELECT
-			users.id, users.username, users.is_admin, users.timezone
+			users.id, users.username, users.is_admin, users.timezone, integrations.fever_token
 		FROM
 			users
-		LEFT JOIN
+		INNER JOIN
 			integrations ON integrations.user_id=users.id
 		WHERE
-			integrations.fever_enabled = 1 AND lower(integrations.fever_token)=lower(?1)
+			integrations.fever_enabled = 1
 	`
 
-	var user model.User
-	err := s.reader().QueryRow(query, token).Scan(&user.ID, &user.Username, &user.IsAdmin, &user.Timezone)
-	switch {
-	case errors.Is(err, sql.ErrNoRows):
-		return nil, nil
-	case err != nil:
+	rows, err := s.reader().Query(query)
+	if err != nil {
 		return nil, fmt.Errorf("store: unable to fetch user: %v", err)
-	default:
-		return &user, nil
 	}
+	defer rows.Close()
+
+	wantedDigest := sha256.Sum256([]byte(strings.ToLower(token)))
+	var user *model.User
+	for rows.Next() {
+		var candidate model.User
+		var candidateToken string
+		if err := rows.Scan(&candidate.ID, &candidate.Username, &candidate.IsAdmin, &candidate.Timezone, &candidateToken); err != nil {
+			return nil, fmt.Errorf("store: unable to fetch user: %v", err)
+		}
+
+		if candidateToken == "" {
+			continue
+		}
+
+		candidateDigest := sha256.Sum256([]byte(strings.ToLower(candidateToken)))
+		if subtle.ConstantTimeCompare(candidateDigest[:], wantedDigest[:]) == 1 {
+			entry := candidate
+			user = &entry
+			break
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: unable to fetch user: %v", err)
+	}
+
+	return user, nil
 }
 
 // GoogleReaderUserCheckPassword validates the Google Reader hashed password.
@@ -63,7 +95,7 @@ func (s *Storage) GoogleReaderUserCheckPassword(username, password string) error
 		FROM
 			integrations
 		WHERE
-			integrations.googlereader_enabled = 1 AND integrations.googlereader_username=?1
+			integrations.googlereader_enabled = 1 AND integrations.googlereader_username=?1 AND integrations.googlereader_password <> ''
 	`
 
 	err := s.reader().QueryRow(query, username).Scan(&hash)
@@ -93,7 +125,7 @@ func (s *Storage) GoogleReaderUserGetIntegration(username string) (*model.Integr
 		FROM
 			integrations
 		WHERE
-			integrations.googlereader_enabled = 1 AND integrations.googlereader_username=?1
+			integrations.googlereader_enabled = 1 AND integrations.googlereader_username=?1 AND integrations.googlereader_password <> ''
 	`
 
 	err := s.reader().QueryRow(query, username).Scan(&integration.UserID, &integration.GoogleReaderEnabled, &integration.GoogleReaderUsername, &integration.GoogleReaderPassword)
@@ -231,7 +263,11 @@ func (s *Storage) Integration(userID int64) (*model.Integration, error) {
 			linktaco_org_slug,
 			linktaco_tags,
 			linktaco_visibility,
-			archiveorg_enabled
+			archiveorg_enabled,
+			gotify_enabled,
+			gotify_url,
+			gotify_token,
+			gotify_priority
 		FROM
 			integrations
 		WHERE
@@ -361,6 +397,10 @@ func (s *Storage) Integration(userID int64) (*model.Integration, error) {
 		&integration.LinktacoTags,
 		&integration.LinktacoVisibility,
 		&integration.ArchiveorgEnabled,
+		&integration.GotifyEnabled,
+		&integration.GotifyURL,
+		&integration.GotifyToken,
+		&integration.GotifyPriority,
 	)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
@@ -498,9 +538,13 @@ func (s *Storage) UpdateIntegration(integration *model.Integration) error {
 			linktaco_visibility=?118,
 			archiveorg_enabled=?119,
 			linkwarden_collection_id=?120,
-			readeck_push_enabled=?121
+			readeck_push_enabled=?121,
+			gotify_enabled=?122,
+			gotify_url=?123,
+			gotify_token=?124,
+			gotify_priority=?125
 		WHERE
-			user_id=?122
+			user_id=?126
 	`
 	_, err := s.db.Exec(
 		query,
@@ -625,6 +669,10 @@ func (s *Storage) UpdateIntegration(integration *model.Integration) error {
 		integration.ArchiveorgEnabled,
 		integration.LinkwardenCollectionID,
 		integration.ReadeckPushEnabled,
+		integration.GotifyEnabled,
+		integration.GotifyURL,
+		integration.GotifyToken,
+		integration.GotifyPriority,
 		integration.UserID,
 	)
 

@@ -18,6 +18,7 @@ DOCKER_PLATFORM := amd64
 	darwin-amd64 \
 	darwin-arm64 \
 	freebsd-amd64 \
+	freebsd-arm64 \
 	openbsd-amd64 \
 	build \
 	run \
@@ -76,11 +77,15 @@ freebsd-amd64:
 	@ CGO_ENABLED=0 GOOS=freebsd GOARCH=amd64 go build -ldflags=$(LD_FLAGS) -o $(APP)-$@
 	@ sha256sum $(APP)-$@ > $(APP)-$@.sha256
 
+freebsd-arm64:
+	@ CGO_ENABLED=0 GOOS=freebsd GOARCH=arm64 go build -ldflags=$(LD_FLAGS) -o $(APP)-$@
+	@ sha256sum $(APP)-$@ > $(APP)-$@.sha256
+
 openbsd-amd64:
 	@ GOOS=openbsd GOARCH=amd64 go build -ldflags=$(LD_FLAGS) -o $(APP)-$@
 	@ sha256sum $(APP)-$@ > $(APP)-$@.sha256
 
-build: linux-amd64 linux-arm64 linux-armv7 linux-armv6 linux-armv5 linux-riscv64 darwin-amd64 darwin-arm64 freebsd-amd64 openbsd-amd64
+build: linux-amd64 linux-arm64 linux-armv7 linux-armv6 linux-armv5 linux-riscv64 darwin-amd64 darwin-arm64 freebsd-amd64 freebsd-arm64 openbsd-amd64
 
 run:
 	@ LOG_DATE_TIME=1 LOG_LEVEL=debug RUN_MIGRATIONS=1 CREATE_ADMIN=1 ADMIN_USERNAME=admin ADMIN_PASSWORD=test123 go run main.go

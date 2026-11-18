@@ -157,12 +157,151 @@ func TestRequestBuilder_WithCookie(t *testing.T) {
 			defer server.Close()
 
 			builder := NewRequestBuilder()
-			resp, err := builder.WithCookie(tt.cookie).ExecuteRequest(server.URL)
+			resp, err := builder.WithCookie(tt.cookie, server.URL).ExecuteRequest(server.URL)
 			if err != nil {
 				t.Fatalf("Expected no error, got %v", err)
 			}
 			defer resp.Body.Close()
 		})
+	}
+}
+
+func TestRequestBuilder_WithCookieOnlySentToSameSite(t *testing.T) {
+	// The proxy receives the requests sent to any host, so no DNS is needed.
+	receivedCookies := make(chan string, 1)
+	proxyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case receivedCookies <- r.Header.Get("Cookie"):
+		default:
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer proxyServer.Close()
+
+	proxyURL, err := url.Parse(proxyServer.URL)
+	if err != nil {
+		t.Fatalf("Unable to parse proxy URL: %v", err)
+	}
+
+	// The same builder is used for all requests, like when scraping the entries of a feed.
+	builder := NewRequestBuilder().
+		WithCustomApplicationProxyURL(proxyURL).
+		UseCustomApplicationProxyURL(true).
+		WithCookie("session=secret", "https://feeds.example.org/rss.xml")
+
+	tests := []struct {
+		requestURL string
+		expected   string
+	}{
+		{"http://feeds.example.org/rss.xml", "session=secret"},
+		{"http://www.example.org/article.html", "session=secret"},
+		{"http://example.org/favicon.ico", "session=secret"},
+		{"http://example.net/article.html", ""},
+		{"http://feeds.example.org.example.net/rss.xml", ""},
+		{"http://cdn.example.com/icon.png", ""},
+	}
+
+	for _, tt := range tests {
+		resp, err := builder.ExecuteRequest(tt.requestURL)
+		if err != nil {
+			t.Fatalf("Expected no error for %q, got %v", tt.requestURL, err)
+		}
+		resp.Body.Close()
+
+		select {
+		case cookie := <-receivedCookies:
+			if cookie != tt.expected {
+				t.Errorf("Expected Cookie for %q to be %q, got %q", tt.requestURL, tt.expected, cookie)
+			}
+		default:
+			t.Fatalf("Expected request to %q to be sent through the proxy", tt.requestURL)
+		}
+	}
+}
+
+func TestRequestBuilder_WithCookieNotForwardedOnRedirectToAnotherSite(t *testing.T) {
+	type receivedRequest struct {
+		host   string
+		cookie string
+	}
+
+	receivedRequests := make(chan receivedRequest, 2)
+	proxyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case receivedRequests <- receivedRequest{r.Host, r.Header.Get("Cookie")}:
+		default:
+		}
+
+		if r.Host == "www.example.org" {
+			http.Redirect(w, r, "http://example.net/article.html", http.StatusFound)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer proxyServer.Close()
+
+	proxyURL, err := url.Parse(proxyServer.URL)
+	if err != nil {
+		t.Fatalf("Unable to parse proxy URL: %v", err)
+	}
+
+	builder := NewRequestBuilder().
+		WithCustomApplicationProxyURL(proxyURL).
+		UseCustomApplicationProxyURL(true).
+		WithCookie("session=secret", "https://feeds.example.org/rss.xml")
+
+	resp, err := builder.ExecuteRequest("http://www.example.org/article.html")
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+	resp.Body.Close()
+
+	if len(receivedRequests) != 2 {
+		t.Fatalf("Expected the redirect to be followed, got %d requests", len(receivedRequests))
+	}
+
+	if request := <-receivedRequests; request.cookie != "session=secret" {
+		t.Errorf("Expected Cookie for %q to be %q, got %q", request.host, "session=secret", request.cookie)
+	}
+
+	if request := <-receivedRequests; request.host != "example.net" || request.cookie != "" {
+		t.Errorf("Expected no Cookie to be forwarded to example.net, got %q for %q", request.cookie, request.host)
+	}
+}
+
+func TestIsSameSite(t *testing.T) {
+	tests := []struct {
+		host     string
+		siteHost string
+		expected bool
+	}{
+		{"example.org", "example.org", true},
+		{"www.example.org", "example.org", true},
+		{"example.org", "www.example.org", true},
+		{"www.example.org", "feeds.example.org", true},
+		{"WWW.Example.ORG", "feeds.example.org", true},
+		{"news.example.co.uk", "www.example.co.uk", true},
+		{"xn--bcher-kva.example", "www.bücher.example", true},
+		{"example.net", "example.org", false},
+		{"notexample.org", "example.org", false},
+		{"example.org.example.net", "example.org", false},
+		{"attacker.co.uk", "example.co.uk", false},
+		{"attacker.CO.UK", "www.example.CO.UK", false},
+		{"bob.github.io", "alice.github.io", false},
+		{"127.0.0.1", "127.0.0.1", true},
+		{"10.0.0.1", "192.168.0.1", false},
+		{"::1", "::1", true},
+		{"localhost", "localhost", true},
+		{"intranet", "localhost", false},
+		{"", "example.org", false},
+		{"example.org", "", false},
+		{"", "", false},
+	}
+
+	for _, tt := range tests {
+		if got := isSameSite(tt.host, tt.siteHost); got != tt.expected {
+			t.Errorf("isSameSite(%q, %q) = %v, expected %v", tt.host, tt.siteHost, got, tt.expected)
+		}
 	}
 }
 
@@ -407,7 +546,7 @@ func TestRequestBuilder_ChainedMethods(t *testing.T) {
 	builder := NewRequestBuilder()
 	resp, err := builder.
 		WithUserAgent("TestAgent/1.0", "DefaultAgent/1.0").
-		WithCookie("test=value").
+		WithCookie("test=value", server.URL).
 		WithETag("etag123").
 		WithTimeout(10 * time.Second).
 		ExecuteRequest(server.URL)
@@ -467,12 +606,6 @@ func TestRequestBuilder_AllowPrivateConfiguredProxy(t *testing.T) {
 		name      string
 		configure func(t *testing.T, builder *RequestBuilder, proxyURL string) *RequestBuilder
 	}{
-		{
-			name: "feed proxy",
-			configure: func(t *testing.T, builder *RequestBuilder, proxyURL string) *RequestBuilder {
-				return builder.WithCustomFeedProxyURL(proxyURL)
-			},
-		},
 		{
 			name: "application proxy",
 			configure: func(t *testing.T, builder *RequestBuilder, proxyURL string) *RequestBuilder {
@@ -534,6 +667,176 @@ func TestRequestBuilder_AllowPrivateConfiguredProxy(t *testing.T) {
 	}
 }
 
+func TestRequestBuilder_RefusePrivateFeedProxyByDefault(t *testing.T) {
+	configureFetcherPrivateNetworkOptions(t, "0", "0")
+
+	proxyRequests := make(chan string, 1)
+	proxyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case proxyRequests <- r.URL.String():
+		default:
+		}
+
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer proxyServer.Close()
+
+	_, err := NewRequestBuilder().
+		WithCustomFeedProxyURL(proxyServer.URL).
+		ExecuteRequest("http://feed.invalid/rss.xml")
+	if err == nil {
+		t.Fatal("Expected private feed proxy request to be rejected")
+	}
+
+	if !strings.Contains(err.Error(), "refusing to access private network host") {
+		t.Fatalf("Unexpected error for private feed proxy request: %v", err)
+	}
+
+	select {
+	case gotURL := <-proxyRequests:
+		t.Fatalf("Expected private feed proxy to receive no request, got %q", gotURL)
+	default:
+	}
+}
+
+func TestRequestBuilder_AllowPrivateFeedProxyWhenEnabled(t *testing.T) {
+	configureFetcherPrivateNetworkOptions(t, "0", "1")
+
+	targetURL := "http://feed.invalid/rss.xml"
+	proxyRequests := make(chan string, 1)
+	proxyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case proxyRequests <- r.URL.String():
+		default:
+		}
+
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer proxyServer.Close()
+
+	resp, err := NewRequestBuilder().
+		WithCustomFeedProxyURL(proxyServer.URL).
+		ExecuteRequest(targetURL)
+	if err != nil {
+		t.Fatalf("Expected private feed proxy request to succeed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	select {
+	case gotURL := <-proxyRequests:
+		if gotURL != targetURL {
+			t.Fatalf("Expected proxy request URL to be %q, got %q", targetURL, gotURL)
+		}
+	default:
+		t.Fatal("Expected request to be sent through the private feed proxy")
+	}
+}
+
+func TestRequestBuilder_AllowPrivateEnvironmentProxy(t *testing.T) {
+	configureFetcherAllowPrivateNetworksOption(t, "0")
+
+	targetURL := "http://feed.invalid/rss.xml"
+	proxyRequests := make(chan string, 1)
+	proxyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case proxyRequests <- r.URL.String():
+		default:
+		}
+
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer proxyServer.Close()
+
+	t.Setenv("HTTP_PROXY", proxyServer.URL)
+
+	resp, err := NewRequestBuilder().ExecuteRequest(targetURL)
+	if err != nil {
+		t.Fatalf("Expected request through the environment proxy to succeed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	select {
+	case gotURL := <-proxyRequests:
+		if gotURL != targetURL {
+			t.Fatalf("Expected proxy request URL to be %q, got %q", targetURL, gotURL)
+		}
+	default:
+		t.Fatal("Expected request to be sent through the environment proxy")
+	}
+}
+
+func TestRequestBuilder_RefusePrivateNetworkWhenExcludedFromEnvironmentProxy(t *testing.T) {
+	configureFetcherAllowPrivateNetworksOption(t, "0")
+
+	privateServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer privateServer.Close()
+
+	proxyRequests := make(chan string, 1)
+	proxyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case proxyRequests <- r.URL.String():
+		default:
+		}
+
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer proxyServer.Close()
+
+	t.Setenv("HTTP_PROXY", proxyServer.URL)
+	t.Setenv("NO_PROXY", "feed.invalid")
+
+	_, err := NewRequestBuilder().ExecuteRequest("http://feed.invalid/rss.xml")
+	if err == nil {
+		t.Fatal("Expected request excluded from the environment proxy to fail")
+	}
+
+	select {
+	case gotURL := <-proxyRequests:
+		t.Fatalf("Expected request to bypass the environment proxy, but the proxy received %q", gotURL)
+	default:
+	}
+}
+
+func TestRequestBuilder_AllowPrivateEnvironmentProxyOnRedirect(t *testing.T) {
+	configureFetcherAllowPrivateNetworksOption(t, "0")
+
+	connectRequests := make(chan string, 1)
+	httpsProxyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case connectRequests <- r.Host:
+		default:
+		}
+
+		http.Error(w, "tunneling is not supported by this test proxy", http.StatusBadGateway)
+	}))
+	defer httpsProxyServer.Close()
+
+	httpProxyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "https://secure.invalid/rss.xml", http.StatusFound)
+	}))
+	defer httpProxyServer.Close()
+
+	t.Setenv("HTTP_PROXY", httpProxyServer.URL)
+	t.Setenv("HTTPS_PROXY", httpsProxyServer.URL)
+
+	if _, err := NewRequestBuilder().ExecuteRequest("http://feed.invalid/rss.xml"); err != nil {
+		if strings.Contains(err.Error(), "refusing to access private network host") {
+			t.Fatalf("Expected the proxy selected after the redirect to be reachable: %v", err)
+		}
+	}
+
+	select {
+	case gotHost := <-connectRequests:
+		if gotHost != "secure.invalid:443" {
+			t.Fatalf("Expected the HTTPS proxy to receive a CONNECT request for %q, got %q", "secure.invalid:443", gotHost)
+		}
+	default:
+		t.Fatal("Expected the redirect to be sent through the HTTPS environment proxy")
+	}
+}
+
 func TestRequestBuilder_RefusePrivateNetworkOnRedirect(t *testing.T) {
 	configureFetcherAllowPrivateNetworksOption(t, "0")
 
@@ -586,9 +889,14 @@ func TestRequestBuilder_TimeoutConfiguration(t *testing.T) {
 }
 
 func configureFetcherAllowPrivateNetworksOption(t *testing.T, value string) {
+	configureFetcherPrivateNetworkOptions(t, value, "0")
+}
+
+func configureFetcherPrivateNetworkOptions(t *testing.T, privateNetworks, privateFeedProxy string) {
 	t.Helper()
 
-	t.Setenv("FETCHER_ALLOW_PRIVATE_NETWORKS", value)
+	t.Setenv("FETCHER_ALLOW_PRIVATE_NETWORKS", privateNetworks)
+	t.Setenv("FETCHER_ALLOW_PRIVATE_FEED_PROXY", privateFeedProxy)
 
 	configParser := config.NewConfigParser()
 	parsedOptions, err := configParser.ParseEnvironmentVariables()

@@ -164,7 +164,6 @@ var migrations = [...]func(tx *sql.Tx) error{
 			`CREATE INDEX entries_id_user_status_idx ON entries(id, user_id, status)`,
 			`CREATE INDEX entries_user_id_status_starred_idx ON entries(user_id, status, starred)`,
 			`CREATE INDEX entries_user_status_feed_idx ON entries(user_id, status, feed_id)`,
-			`CREATE INDEX entries_user_status_changed_idx ON entries(user_id, status, changed_at)`,
 			`CREATE INDEX entries_user_status_published_idx ON entries(user_id, status, published_at)`,
 			`CREATE INDEX entries_user_status_created_idx ON entries(user_id, status, created_at)`,
 			`CREATE INDEX entries_user_status_changed_published_idx ON entries(user_id, status, changed_at, published_at)`,
@@ -325,6 +324,10 @@ var migrations = [...]func(tx *sql.Tx) error{
 				discord_enabled integer not null default 0,
 				discord_webhook_link text not null default '',
 				archiveorg_enabled integer not null default 0,
+				gotify_enabled integer not null default 0,
+				gotify_url text not null default '',
+				gotify_token text not null default '',
+				gotify_priority integer not null default 0,
 				pushover_enabled integer not null default 0,
 				pushover_user text not null default '',
 				pushover_token text not null default '',
@@ -444,6 +447,58 @@ var migrations = [...]func(tx *sql.Tx) error{
 				return fmt.Errorf("sqlite migration: %v\nSQL: %s", err, stmt)
 			}
 		}
+		return nil
+	},
+	func(tx *sql.Tx) (err error) {
+		// entries_user_status_changed_idx(user_id, status, changed_at) is
+		// redundant: it is a strict prefix of
+		// entries_user_status_changed_published_idx(user_id, status,
+		// changed_at, published_at), which serves every query the shorter
+		// index could (including the history page and changed_at pagination).
+		_, err = tx.Exec(`
+			DROP INDEX IF EXISTS entries_user_status_changed_idx;
+		`)
+		return err
+	},
+	func(tx *sql.Tx) (err error) {
+		// Upstream indexes the raw SHA-256 digest of the enclosure URL to
+		// roughly halve the index on disk. SQLite has no built-in sha256()
+		// function (it comes from PostgreSQL's pgcrypto) and functional
+		// indexes require a deterministic function, so the fork keeps the
+		// plain (user_id, entry_id, url) unique index created by the initial
+		// schema. It matches the ON CONFLICT target used by createEnclosure.
+		return nil
+	},
+	func(tx *sql.Tx) (err error) {
+		// SQLite can only add one column per ALTER TABLE statement and has no
+		// ADD COLUMN IF NOT EXISTS, so each Gotify column is added separately
+		// and only when missing. The initial schema already contains them for
+		// fresh databases; this covers databases created before the Gotify
+		// integration was added.
+		columns := []struct {
+			name       string
+			definition string
+		}{
+			{"gotify_enabled", "integer not null default 0"},
+			{"gotify_url", "text not null default ''"},
+			{"gotify_token", "text not null default ''"},
+			{"gotify_priority", "integer not null default 0"},
+		}
+
+		for _, column := range columns {
+			var count int
+			if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('integrations') WHERE name = ?`, column.name).Scan(&count); err != nil {
+				return err
+			}
+			if count > 0 {
+				continue
+			}
+
+			if _, err := tx.Exec(`ALTER TABLE integrations ADD COLUMN ` + column.name + ` ` + column.definition); err != nil {
+				return err
+			}
+		}
+
 		return nil
 	},
 }
